@@ -3,113 +3,120 @@
 # Copyright 2023 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-# Learn more at: https://juju.is/docs/sdk
-
-"""Charm the service.
-
-Refer to the following post for a quick-start guide that will help you
-develop a new k8s charm using the Operator Framework:
-
-https://discourse.charmhub.io/t/4208
-"""
+"""Charm jenkins agent."""
 
 import logging
+import typing
 
 import ops
+from ops.main import main
 
-# Log messages can be retrieved using juju debug-log
-logger = logging.getLogger(__name__)
+import agent_observer
+import service
+import server
+from state import AGENT_RELATION, InvalidStateError, State
 
-VALID_LOG_LEVELS = ["info", "debug", "warning", "error", "critical"]
+logger = logging.getLogger()
 
 
-class IsCharmsTemplateCharm(ops.CharmBase):
-    """Charm the service."""
+class JenkinsAgentCharm(ops.CharmBase):
+    """Charm Jenkins agent."""
 
-    def __init__(self, *args):
-        """Construct.
+    def __init__(self, *args: typing.Any):
+        """Initialize the charm and register event handlers.
 
         Args:
-            args: Arguments passed to the CharmBase parent constructor.
+            args: Arguments to initialize the charm base.
         """
         super().__init__(*args)
-        self.framework.observe(self.on.httpbin_pebble_ready, self._on_httpbin_pebble_ready)
+        try:
+            self.state = State.from_charm(self)
+        except InvalidStateError as exc:
+            self.unit.status = ops.BlockedStatus(exc.msg)
+            return
+
+        self.pebble_service = service.Service(self.state)
+        self.agent_observer = agent_observer.Observer(self, self.state, self.pebble_service)
+
         self.framework.observe(self.on.config_changed, self._on_config_changed)
+        self.framework.observe(self.on.upgrade_charm, self._on_upgrade_charm)
 
-    def _on_httpbin_pebble_ready(self, event: ops.PebbleReadyEvent):
-        """Define and start a workload using the Pebble API.
-
-        Change this example to suit your needs. You'll need to specify the right entrypoint and
-        environment configuration for your specific workload.
-
-        Learn more about interacting with Pebble at at https://juju.is/docs/sdk/pebble.
+    def _register_via_config(
+        self, event: typing.Union[ops.ConfigChangedEvent, ops.UpgradeCharmEvent]
+    ) -> None:
+        """Register the agent to server from configuration values.
 
         Args:
-            event: event triggering the handler.
+            event: The event fired on config changed or upgrade charm.
+
+        Raises:
+            RuntimeError: if the Jenkins agent failed to download.
         """
-        # Get a reference the container attribute on the PebbleReadyEvent
-        container = event.workload
-        # Add initial Pebble config layer using the Pebble API
-        container.add_layer("httpbin", self._pebble_layer, combine=True)
-        # Make Pebble reevaluate its plan, ensuring any services are started if enabled.
-        container.replan()
-        # Learn more about statuses in the SDK docs:
-        # https://juju.is/docs/sdk/constructs#heading--statuses
-        self.unit.status = ops.ActiveStatus()
+        container = self.unit.get_container(self.state.jenkins_agent_service_name)
+        if not container.can_connect():
+            logger.warning("Jenkins agent container not yet ready. Deferring.")
+            event.defer()
+            return
 
-    def _on_config_changed(self, event: ops.ConfigChangedEvent):
-        """Handle changed configuration.
+        if (
+            not self.state.jenkins_config
+            and not self.model.get_relation(AGENT_RELATION)
+        ):
+            self.model.unit.status = ops.BlockedStatus("Waiting for config/relation.")
+            return
 
-        Change this example to suit your needs. If you don't need to handle config, you can remove
-        this method.
+        if not self.state.jenkins_config:
+            # Support fallback relation to AGENT_RELATION.
+            self.model.unit.status = ops.BlockedStatus(
+                "Please remove and re-relate agent relation."
+            )
+            return
 
-        Learn more about config at https://juju.is/docs/sdk/config
+        try:
+            server.download_jenkins_agent(
+                server_url=self.state.jenkins_config.server_url,
+                container=container,
+            )
+        except server.AgentJarDownloadError as exc:
+            logger.error("Failed to download Agent JAR executable, %s", exc)
+            raise RuntimeError("Failed to download Jenkins agent. Fix issue ") from exc
+
+        valid_agent_token = server.find_valid_credentials(
+            agent_name_token_pairs=self.state.jenkins_config.agent_name_token_pairs,
+            server_url=self.state.jenkins_config.server_url,
+            container=container,
+        )
+        if not valid_agent_token:
+            logger.error("No valid agent-token pair found.")
+            self.model.unit.status = ops.BlockedStatus(
+                "Additional valid agent-token pairs required."
+            )
+            return
+
+        self.model.unit.status = ops.MaintenanceStatus("Starting agent pebble service.")
+        self.pebble_service.reconcile(
+            server_url=self.state.jenkins_config.server_url,
+            agent_token_pair=valid_agent_token,
+            container=container,
+        )
+        self.model.unit.status = ops.ActiveStatus()
+
+    def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
+        """Handle config changed event.
 
         Args:
-            event: event triggering the handler.
+            event: The event fired on configuration change.
         """
-        # Fetch the new config value
-        log_level = self.model.config["log-level"].lower()
+        self._register_via_config(event)
 
-        # Do some validation of the configuration option
-        if log_level in VALID_LOG_LEVELS:
-            # The config is good, so update the configuration of the workload
-            container = self.unit.get_container("httpbin")
-            # Verify that we can connect to the Pebble API in the workload container
-            if container.can_connect():
-                # Push an updated layer with the new config
-                container.add_layer("httpbin", self._pebble_layer, combine=True)
-                container.replan()
+    def _on_upgrade_charm(self, event: ops.UpgradeCharmEvent) -> None:
+        """Handle upgrade charm event.
 
-                logger.debug("Log level for gunicorn changed to '%s'", log_level)
-                self.unit.status = ops.ActiveStatus()
-            else:
-                # We were unable to connect to the Pebble API, so we defer this event
-                event.defer()
-                self.unit.status = ops.WaitingStatus("waiting for Pebble API")
-        else:
-            # In this case, the config option is bad, so block the charm and notify the operator.
-            self.unit.status = ops.BlockedStatus("invalid log level: '{log_level}'")
-
-    @property
-    def _pebble_layer(self):
-        """Return a dictionary representing a Pebble layer."""
-        return {
-            "summary": "httpbin layer",
-            "description": "pebble config layer for httpbin",
-            "services": {
-                "httpbin": {
-                    "override": "replace",
-                    "summary": "httpbin",
-                    "command": "gunicorn -b 0.0.0.0:80 httpbin:app -k gevent",
-                    "startup": "enabled",
-                    "environment": {
-                        "GUNICORN_CMD_ARGS": f"--log-level {self.model.config['log-level']}"
-                    },
-                }
-            },
-        }
+        Args:
+            event: The event fired on upgrade charm.
+        """
+        self._register_via_config(event)
 
 
-if __name__ == "__main__":  # pragma: nocover
-    ops.main.main(IsCharmsTemplateCharm)
+if __name__ == "__main__":  # pragma: no cover
+    main(JenkinsAgentCharm)
