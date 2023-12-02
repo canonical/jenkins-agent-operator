@@ -17,7 +17,6 @@ apps:
       PATH: $JAVA_HOME/bin:$SNAP/bin/usr/bin:$PATH
     plugs:
       - "network"
-      - "home"
 parts:
   part-jenkins-agent:
     stage-snaps:
