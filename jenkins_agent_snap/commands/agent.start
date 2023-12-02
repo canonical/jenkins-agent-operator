@@ -1,0 +1,43 @@
+#!/bin/bash
+
+# Copyright 2023 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+set -eu -o pipefail
+
+export LC_ALL=C
+export TERM=xterm
+
+. "$SNAP/bin/management"
+# defaults for jenkins-agent component of the jenkins continuous integration
+# system
+
+# Setup
+echo "JAVA_HOME : $JAVA_HOME"
+echo "snap run user: $(whoami)"
+WORKDIR=$(pwd)
+echo "snap workdir: ${SNAP}, current dir: ${WORKDIR}"
+which java || echo "java not found, exiting"
+echo "Fetching environment variables"
+# URL of jenkins server to connect to
+# Not specifying this parameter will stop the agent
+# job from running.
+jenkins_url="$(jenkins_url)"
+typeset JENKINS_URL="${jenkins_url:?"URL of a jenkins server must be provided"}"
+# Agent
+jenkins_agent="$(jenkins_agent)"
+typeset JENKINS_AGENT="${jenkins_agent:?"Jenkins agent name must be provided"}"
+# Token
+jenkins_token="$(jenkins_token)"
+typeset JENKINS_TOKEN="${jenkins_token:?"Jenkins agent token must be provided"}"
+# Download the agent.jar
+echo "Downloading agent binary"
+curl -sO "${JENKINS_URL}/jnlpJars/agent.jar"
+# Inspect
+ls -la agent.jar
+# Specify the agent as ready
+touch $WORKDIR/.ready
+# Start Jenkins agent
+java -jar agent.jar -jnlpUrl "${JENKINS_URL}/computer/${JENKINS_AGENT}/slave-agent.jnlp" -workDir "${WORKDIR}" -noReconnect -secret "${JENKINS_TOKEN}" || echo "Invalid or already used credentials."
+# Remove ready mark if unsuccessful
+rm $WORKDIR/.ready

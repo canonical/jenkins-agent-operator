@@ -1,0 +1,59 @@
+#!/bin/sh
+
+# source the management script
+. "$SNAP/bin/management"
+
+handle_jenkins_url_config()
+{
+        jenkins_url="$(jenkins_url)"
+
+        # Validate URL
+        # if ! expr "$http_port" : '^[0-9]\+$' > /dev/null; then
+        #         echo "\"$http_port\" is not a valid HTTP port" >&2
+        #         return 1
+        # fi
+
+       # run function from management script
+        set_jenkins_url "$jenkins_url"
+
+        # Restart example-server to apply new config
+        snapctl restart jenkins-agent
+}
+
+handle_jenkins_agent_config()
+{
+        jenkins_agent="$(jenkins_agent)"
+
+        # Validate agent
+        # if ! expr "$http_port" : '^[0-9]\+$' > /dev/null; then
+        #         echo "\"$http_port\" is not a valid HTTP port" >&2
+        #         return 1
+        # fi
+
+       # run function from management script
+        set_jenkins_agent "$jenkins_agent"
+
+        # Restart example-server to apply new config
+        snapctl restart jenkins-agent
+}
+
+handle_jenkins_token_config()
+{
+        jenkins_token="$(jenkins_token)"
+
+        # Validate Token
+        # if ! expr "$http_port" : '^[0-9]\+$' > /dev/null; then
+        #         echo "\"$http_port\" is not a valid HTTP port" >&2
+        #         return 1
+        # fi
+
+       # run function from management script
+        set_jenkins_token "$jenkins_token"
+
+        # Restart example-server to apply new config
+        snapctl restart jenkins-agent
+}
+
+handle_jenkins_url_config
+handle_jenkins_agent_config
+handle_jenkins_token_config
