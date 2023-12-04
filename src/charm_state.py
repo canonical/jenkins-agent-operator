@@ -36,40 +36,6 @@ class InvalidStateError(CharmStateBaseError):
         self.msg = msg
 
 
-class JenkinsConfig(BaseModel):
-    """The Jenkins config from juju config values.
-
-    Attrs:
-        server_url: The Jenkins server url.
-        agent_name_token_pairs: Jenkins agent names paired with corresponding token value.
-    """
-
-    server_url: str = Field(..., min_length=1)
-    agent_name_token_pairs: typing.List[typing.Tuple[str, str]] = Field(..., min_items=1)
-
-    @classmethod
-    def from_charm_config(cls, config: ops.ConfigData) -> typing.Optional["JenkinsConfig"]:
-        """Instantiate JenkinsConfig from charm config.
-
-        Args:
-            config: Charm configuration data.
-
-        Returns:
-            JenkinsConfig if configuration exists, None otherwise.
-        """
-        server_url = config.get("jenkins_url")
-        agent_name_config = config.get("jenkins_agent_name")
-        agent_token_config = config.get("jenkins_agent_token")
-        # None represents an unset Jenkins configuration values, meaning configuration values from
-        # relation would be used.
-        if not server_url and not agent_name_config and not agent_token_config:
-            return None
-        agent_names = agent_name_config.split(":") if agent_name_config else []
-        agent_tokens = agent_token_config.split(":") if agent_token_config else []
-        agent_name_token_pairs = list(zip(agent_names, agent_tokens))
-        return cls(server_url=server_url or "", agent_name_token_pairs=agent_name_token_pairs)
-
-
 def _get_jenkins_unit(
     all_units: typing.Set[ops.Unit], current_app_name: str
 ) -> typing.Optional[ops.Unit]:
@@ -123,7 +89,6 @@ class State:
     """
 
     agent_meta: metadata.Agent
-    jenkins_config: typing.Optional[JenkinsConfig]
     agent_relation_credentials: typing.Optional[server.Credentials]
     jenkins_agent_service_name: str = "jenkins-agent"
 
@@ -150,12 +115,6 @@ class State:
             logging.error("Invalid executor state, %s", exc)
             raise InvalidStateError("Invalid executor state.") from exc
 
-        try:
-            jenkins_config = JenkinsConfig.from_charm_config(charm.config)
-        except ValidationError as exc:
-            logging.error("Invalid jenkins config values, %s", exc)
-            raise InvalidStateError("Invalid jenkins config values.") from exc
-
         agent_relation = charm.model.get_relation(AGENT_RELATION)
         agent_relation_credentials: typing.Optional[server.Credentials] = None
         if agent_relation and (
@@ -167,6 +126,5 @@ class State:
 
         return cls(
             agent_meta=agent_meta,
-            jenkins_config=jenkins_config,
             agent_relation_credentials=agent_relation_credentials,
         )

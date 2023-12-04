@@ -39,17 +39,6 @@ def model_fixture(ops_test: OpsTest) -> Model:
     return ops_test.model
 
 
-@pytest.fixture(scope="module", name="agent_image")
-def agent_image_fixture(request: pytest.FixtureRequest) -> str:
-    """The OCI image for jenkins-agent charm."""
-    agent_k8s_image = request.config.getoption("--jenkins-agent-image")
-    assert agent_k8s_image, (
-        "--jenkins-agent-image argument is required which should contain the name of the OCI "
-        "image."
-    )
-    return agent_k8s_image
-
-
 @pytest.fixture(scope="module", name="num_agents")
 def num_agents_fixture() -> int:
     """The number of agents to deploy."""

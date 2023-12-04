@@ -22,9 +22,6 @@ parts:
     stage-snaps:
       - openjdk
     plugin: dump
-    override-prime: |
-      snapcraftctl prime
-      ls -la $SNAPCRAFT_PRIME
     source: commands
     organize:
       '*': bin/
@@ -46,12 +43,6 @@ parts:
     stage-packages:
       - curl
       - git
-    # stage-snaps:
-    #   - charmcraft
-    #   - juju
-    #   - rockcraft
-    #   - lxd
-    #   - snapcraft
     stage:
       - -etc/bash_completion.d
       - -etc/cron.d

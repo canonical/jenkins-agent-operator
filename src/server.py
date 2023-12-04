@@ -4,13 +4,10 @@
 """Functions to interact with jenkins server."""
 
 import logging
-import random
-import time
 import typing
 from pathlib import Path
 
 import ops
-import requests
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -39,37 +36,10 @@ class ServerBaseError(Exception):
     """Represents errors with interacting with Jenkins server."""
 
 
-class AgentJarDownloadError(ServerBaseError):
-    """Represents an error downloading agent JAR executable."""
-
-
-def download_jenkins_agent(server_url: str, container: ops.Container) -> None:
-    """Download Jenkins agent JAR executable from server.
-
-    Args:
-        server_url: The Jenkins server URL address.
-        container: The agent workload container.
-
-    Raises:
-        AgentJarDownloadError: If an error occurred downloading the JAR executable.
-    """
-    try:
-        res = requests.get(f"{server_url}/jnlpJars/agent.jar", timeout=300)
-        res.raise_for_status()
-    except (requests.HTTPError, requests.Timeout, requests.ConnectionError) as exc:
-        logger.error("Failed to download agent JAR executable from server, %s", exc)
-        raise AgentJarDownloadError(
-            "Failed to download agent JAR executable from server."
-        ) from exc
-
-    container.push(path=AGENT_JAR_PATH, make_dirs=True, source=res.content, user=USER)
-
-
 def validate_credentials(
     agent_name: str,
     credentials: Credentials,
     container: ops.Container,
-    add_random_delay: bool = False,
 ) -> bool:
     """Check if the credentials can be used to register to the server.
 
@@ -83,10 +53,6 @@ def validate_credentials(
     Returns:
         True if credentials and agent_name pairs are valid, False otherwise.
     """
-    # IMPORTANT: add random delay to prevent parallel execution.
-    if add_random_delay:
-        # It's okay to use random since it's not used for sensitive data.
-        time.sleep(random.random())  # nosec
     proc: ops.pebble.ExecProcess = container.exec(
         [
             "java",
