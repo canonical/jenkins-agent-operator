@@ -4,10 +4,10 @@
 name: jenkins-agent
 summary: Jenkins agent snap
 description: Agent for jenkins
-version: "1.0.0"
+version: "1.0.0-strict"
 base: core22
 license: Apache-2.0
-confinement: classic
+confinement: strict
 apps:
   jenkins-agent:
     command: "bin/agent.start"

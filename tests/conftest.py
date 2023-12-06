@@ -12,7 +12,5 @@ def pytest_addoption(parser: pytest.Parser):
     Args:
         parser: pytest command line parser.
     """
-    # The Jenkins agent image name:tag.
-    parser.addoption("--jenkins-agent-image", action="store", default="")
     # The prebuilt charm file.
     parser.addoption("--charm-file", action="store", default="")

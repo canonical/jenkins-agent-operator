@@ -3,21 +3,33 @@
 
 """The module for managing charm state."""
 
+
 import logging
 import os
 import typing
 from dataclasses import dataclass
 
 import ops
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ValidationError
 
 import metadata
-import server
 
 # agent relation name
 AGENT_RELATION = "agent"
 
 logger = logging.getLogger()
+
+
+class Credentials(BaseModel):
+    """The credentials used to register to the Jenkins server.
+
+    Attrs:
+        address: The Jenkins server address to register to.
+        secret: The secret used to register agent.
+    """
+
+    address: str
+    secret: str
 
 
 class CharmStateBaseError(Exception):
@@ -59,7 +71,7 @@ def _get_jenkins_unit(
 
 def _get_credentials_from_agent_relation(
     server_unit_databag: ops.RelationDataContent, unit_name: str
-) -> typing.Optional[server.Credentials]:
+) -> typing.Optional[Credentials]:
     """Import server metadata from databag in agent relation.
 
     Args:
@@ -73,7 +85,7 @@ def _get_credentials_from_agent_relation(
     secret = server_unit_databag.get(f"{unit_name}_secret")
     if not address or not secret:
         return None
-    return server.Credentials(address=address, secret=secret)
+    return Credentials(address=address, secret=secret)
 
 
 @dataclass
@@ -82,14 +94,13 @@ class State:
 
     Attrs:
         agent_meta: The Jenkins agent metadata to register on Jenkins server.
-        jenkins_config: Jenkins configuration value from juju config.
         agent_relation_credentials: The full set of credentials from the agent relation. None if
             partial data is set or the credentials do not belong to current agent.
         jenkins_agent_service_name: The Jenkins agent workload container name.
     """
 
     agent_meta: metadata.Agent
-    agent_relation_credentials: typing.Optional[server.Credentials]
+    agent_relation_credentials: typing.Optional[Credentials]
     jenkins_agent_service_name: str = "jenkins-agent"
 
     @classmethod
@@ -116,7 +127,7 @@ class State:
             raise InvalidStateError("Invalid executor state.") from exc
 
         agent_relation = charm.model.get_relation(AGENT_RELATION)
-        agent_relation_credentials: typing.Optional[server.Credentials] = None
+        agent_relation_credentials: typing.Optional[Credentials] = None
         if agent_relation and (
             agent_relation_jenkins_unit := _get_jenkins_unit(agent_relation.units, charm.app.name)
         ):

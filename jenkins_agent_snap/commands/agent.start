@@ -23,9 +23,16 @@ export TERM=xterm
 
 . "$SNAP/bin/management"
 
-readonly JENKINS_HOME="/var/lib/jenkins"
+# readonly JENKINS_HOME="/var/lib/jenkins"
+# readonly JENKINS_HOME="/home/var/lib/jenkins"
+# readonly JENKINS_HOME="/media/var/lib/jenkins"
+readonly JENKINS_HOME="/var/snap/jenkins-agent/common/agent"
+
+
 if ! mkdir -p $JENKINS_HOME; then
     err "Error initializing the agent's home directory"
+    # err "The snap might not be connected to the :home interface"
+    # err "Run snap connect jenkins-agent:home :home"
     stop
 fi
 cd $JENKINS_HOME
