@@ -58,6 +58,12 @@ class JenkinsAgentService:
 
             if not agent.present:
                 agent.ensure(snap.SnapState.Latest, classic=False, channel="latest/edge")
+
+            if proxy := self.state.proxy_config:
+                system = cache["core"]
+                system.set(
+                    {"proxy.http": str(proxy.http_proxy), "proxy.https": str(proxy.https_proxy)}
+                )
         except snap.SnapError as exc:
             raise SnapInstallError("Error installing the agent charm") from exc
 

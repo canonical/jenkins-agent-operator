@@ -10,7 +10,7 @@ import typing
 from dataclasses import dataclass
 
 import ops
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, HttpUrl
 
 import metadata
 
@@ -30,6 +30,37 @@ class Credentials(BaseModel):
 
     address: str
     secret: str
+
+
+class ProxyConfig(BaseModel):
+    """Configuration for external access through proxy.
+
+    Attributes:
+        http_proxy: The http proxy URL.
+        https_proxy: The https proxy URL.
+        no_proxy: Comma separated list of hostnames to bypass proxy.
+    """
+
+    http_proxy: typing.Optional[HttpUrl]
+    https_proxy: typing.Optional[HttpUrl]
+
+    @classmethod
+    def from_env(cls) -> typing.Optional["ProxyConfig"]:
+        """Instantiate ProxyConfig from juju charm environment.
+
+        Returns:
+            ProxyConfig if proxy configuration is provided, None otherwise.
+        """
+        http_proxy = os.environ.get("JUJU_CHARM_HTTP_PROXY")
+        https_proxy = os.environ.get("JUJU_CHARM_HTTPS_PROXY")
+
+        if not http_proxy and not https_proxy:
+            return None
+
+        return cls(
+            http_proxy=http_proxy if http_proxy else None,
+            https_proxy=https_proxy if https_proxy else None,
+        )
 
 
 class CharmStateBaseError(Exception):
@@ -90,18 +121,17 @@ def _get_credentials_from_agent_relation(
 
 @dataclass
 class State:
-    """The Jenkins agent state.
+    """The jenkins agent state.
 
-    Attrs:
-        agent_meta: The Jenkins agent metadata to register on Jenkins server.
-        agent_relation_credentials: The full set of credentials from the agent relation. None if
-            partial data is set or the credentials do not belong to current agent.
-        jenkins_agent_service_name: The Jenkins agent workload container name.
+    Attributes:
+        agent_meta: metadata of the agent visible to the jenkins server
+        agent_relation_credentials: information required to connect to the jenkins server
+        proxy_config: proxy configuration to access the snap store
     """
 
     agent_meta: metadata.Agent
     agent_relation_credentials: typing.Optional[Credentials]
-    jenkins_agent_service_name: str = "jenkins-agent"
+    proxy_config: typing.Optional[ProxyConfig]
 
     @classmethod
     def from_charm(cls, charm: ops.CharmBase) -> "State":
@@ -135,7 +165,14 @@ class State:
                 agent_relation.data[agent_relation_jenkins_unit], agent_meta.name
             )
 
+        try:
+            proxy_config = ProxyConfig.from_env()
+        except ValidationError as exc:
+            logger.error("Invalid juju model proxy configuration, %s", exc)
+            raise InvalidStateError("Invalid model proxy configuration.") from exc
+
         return cls(
             agent_meta=agent_meta,
             agent_relation_credentials=agent_relation_credentials,
+            proxy_config=proxy_config,
         )
