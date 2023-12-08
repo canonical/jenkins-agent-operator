@@ -1,4 +1,4 @@
 # Copyright 2023 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-"""Unit tests module."""
+"""Unit tests for the Pollen operator."""

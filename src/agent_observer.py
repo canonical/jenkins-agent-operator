@@ -80,10 +80,9 @@ class Observer(ops.Object):
             logger.info("Waiting for complete relation data.")
             return
 
-        self.charm.unit.status = ops.MaintenanceStatus("Downloading Jenkins agent executable.")
+        self.charm.unit.status = ops.MaintenanceStatus("Starting jenkins agent service")
         self.jenkins_agent_service.restart()
 
-        self.charm.unit.status = ops.MaintenanceStatus("Validating credentials.")
         if not self.jenkins_agent_service.is_active:
             # The jenkins server sets credentials one by one, hence if the current credentials are
             # not for this particular agent, the agent operator should wait until it receives one
@@ -92,7 +91,9 @@ class Observer(ops.Object):
                 "Failed credential for agent %s, will wait for next credentials to be set",
                 self.state.agent_meta.name,
             )
-            self.charm.unit.status = ops.WaitingStatus("Waiting for credentials.")
+            self.charm.unit.status = ops.WaitingStatus(
+                "Failed to start the service. Waiting for another set of credentials"
+            )
             return
 
         self.charm.unit.status = ops.ActiveStatus()

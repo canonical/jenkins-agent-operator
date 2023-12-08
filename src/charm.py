@@ -31,8 +31,9 @@ class JenkinsAgentCharm(ops.CharmBase):
         super().__init__(*args)
         try:
             self.state = State.from_charm(self)
-        except InvalidStateError as exc:
-            self.unit.status = ops.BlockedStatus(exc.msg)
+        except InvalidStateError as e:
+            logger.debug("Error parsing charm_state %s", e)
+            self.unit.status = ops.BlockedStatus(e.msg)
             return
 
         self.jenkins_agent_service = service.JenkinsAgentService(self.state)
@@ -49,15 +50,13 @@ class JenkinsAgentCharm(ops.CharmBase):
             self.jenkins_agent_service.install()
         except service.SnapInstallError as e:
             logger.debug("Error installing the agent service %s", e)
-            self.unit.status = ops.BlockedStatus("Error installing the agent service")
+            self.unit.status = ops.ErrorStatus("Error installing the agent service")
 
-    def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
-        """Handle config changed event. Update the agent's label in the relation's databag.
-
-        Args:
-            event: The event fired on configuration change.
-        """
-        self.reconcile(event)
+    def _on_config_changed(self, _: ops.ConfigChangedEvent) -> None:
+        """Handle config changed event. Update the agent's label in the relation's databag."""
+        if agent_relation := self.model.get_relation(AGENT_RELATION):
+            relation_data = self.state.agent_meta.get_jenkins_agent_v0_interface_dict()
+            agent_relation.data[self.unit].update(relation_data)
 
     def _on_upgrade_charm(self, event: ops.UpgradeCharmEvent) -> None:
         """Handle upgrade charm event.
@@ -70,7 +69,7 @@ class JenkinsAgentCharm(ops.CharmBase):
     def reconcile(self, _: ops.EventBase):
         """Reconciliation for the jenkins agent charm."""
         if not self.model.get_relation(AGENT_RELATION):
-            self.model.unit.status = ops.BlockedStatus("Waiting for relation.")
+            self.model.unit.status = ops.WaitingStatus("Waiting for relation.")
             return
 
         if not self.state.agent_relation_credentials:
@@ -88,6 +87,9 @@ class JenkinsAgentCharm(ops.CharmBase):
 
     def _on_update_status(self, _: ops.UpdateStatusEvent) -> None:
         """Check status of the snap and report back to juju."""
+        logger.debug(
+            "Jenkins agent service is currently up: %s", self.jenkins_agent_service.is_active
+        )
         if self.jenkins_agent_service.is_active:
             self.unit.status = ops.ActiveStatus()
         else:

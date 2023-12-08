@@ -36,6 +36,7 @@ profile = "black"
 [tool.mypy]
 ignore_missing_imports = true
 explicit_package_bases = true
+check_untyped_defs = true
 namespace_packages = true
 plugins = ["pydantic.mypy"]
 
