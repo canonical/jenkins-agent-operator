@@ -3,8 +3,9 @@
 
 """Fixtures for Pollen charm tests."""
 
+from pytest import Parser
 
-def pytest_addoption(parser):
+def pytest_addoption(parser: Parser):
     """Parse additional pytest options.
 
     Args:
