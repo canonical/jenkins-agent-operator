@@ -7,19 +7,16 @@ import logging
 import secrets
 import typing
 
-import jenkinsapi.jenkins
 import pytest
 import pytest_asyncio
-from juju.action import Action
 from juju.application import Application
-from juju.client._definitions import FullStatus, UnitStatus
 from juju.model import Controller, Model
-from juju.unit import Unit
 from pytest_operator.plugin import OpsTest
 
 logger = logging.getLogger(__name__)
 
 BLOCKED_STATUS_NAME = "blocked"
+
 
 @pytest_asyncio.fixture(scope="module", name="charm")
 async def charm_fixture(request: pytest.FixtureRequest, ops_test: OpsTest) -> str:
@@ -51,11 +48,8 @@ async def application_fixture(
     model: Model, charm: str, num_agents: int
 ) -> typing.AsyncGenerator[Application, None]:
     """Build and deploy the charm."""
-
     # Deploy the charm and wait for blocked status
-    application = await model.deploy(
-        charm, num_units=num_agents, series="focal"
-    )
+    application = await model.deploy(charm, num_units=num_agents, series="focal")
     await model.wait_for_idle(apps=[application.name], status=BLOCKED_STATUS_NAME)
 
     yield application
@@ -63,11 +57,11 @@ async def application_fixture(
     await model.remove_application(application.name, block_until_done=True, force=True)
 
 
-# Connect the k8s controller
 @pytest_asyncio.fixture(scope="module", name="k8s_controller")
 async def jenkins_server_k8s_controller_fixture() -> typing.AsyncGenerator[Controller, None]:
     """The juju controller on microk8s.
-    The controller is bootstrapped in "pre_run_script.sh"."""
+    The controller is bootstrapped in "pre_run_script.sh".
+    """
     controller = Controller()
     await controller.connect("controller")
     cloud = await controller.get_cloud()
@@ -77,7 +71,7 @@ async def jenkins_server_k8s_controller_fixture() -> typing.AsyncGenerator[Contr
 
     await controller.disconnect()
 
-# Create the model
+
 @pytest_asyncio.fixture(scope="module", name="jenkins_server_model")
 async def jenkins_server_model_fixture(
     k8s_controller: Controller,
@@ -90,9 +84,11 @@ async def jenkins_server_model_fixture(
 
     yield model
 
-    await k8s_controller.destroy_models(model.name, destroy_storage=True, force=True, max_wait= 10 * 60)
+    await k8s_controller.destroy_models(
+        model.name, destroy_storage=True, force=True, max_wait=10 * 60
+    )
 
-# Deploy jenkins-k8s
+
 @pytest_asyncio.fixture(scope="module", name="jenkins_server")
 async def jenkins_server_fixture(jenkins_server_model: Model) -> Application:
     """The jenkins machine server."""
@@ -102,12 +98,13 @@ async def jenkins_server_fixture(jenkins_server_model: Model) -> Application:
         timeout=20 * 60,
         wait_for_active=True,
         idle_period=30,
-        raise_on_error=False
+        raise_on_error=False,
     )
 
     return jenkins
 
-# # Get IP of jenkins-k8s
+
+# Get IP of jenkins-k8s
 # @pytest_asyncio.fixture(scope="module", name="server_unit_ip")
 # async def server_unit_ip_fixture(jenkins_server_model: Model, jenkins_server: Application):
 #     """Get Jenkins machine server charm unit IP."""

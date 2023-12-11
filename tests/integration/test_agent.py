@@ -13,6 +13,7 @@ logger = logging.getLogger()
 
 MICROK8S_CONTROLLER = "controller"
 
+
 async def test_agent_relation(
     jenkins_server: Application,
     jenkins_agent_application: Application,

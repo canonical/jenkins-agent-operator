@@ -5,6 +5,7 @@
 
 from pytest import Parser
 
+
 def pytest_addoption(parser: Parser):
     """Parse additional pytest options.
 
