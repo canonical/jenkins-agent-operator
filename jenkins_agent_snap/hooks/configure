@@ -1,5 +1,8 @@
 #!/bin/sh
 
+# Copyright 2023 Canonical Ltd.
+# See LICENSE file for licensing details.
+
 # source the management script
 . "$SNAP/bin/management"
 
