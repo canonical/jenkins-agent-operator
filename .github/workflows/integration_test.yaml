@@ -25,3 +25,5 @@ jobs:
       zap-rules-file-name: "zap_rules.tsv"
       trivy-fs-enabled: true
       trivy-image-config: "trivy.yaml"
+      provider: lxd
+      juju-channel: 3.1/stable
