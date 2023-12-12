@@ -7,6 +7,9 @@ jobs:
   integration-tests:
     uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@main
     secrets: inherit
+    permissions:
+      contents: read
+      packages: write
     with:
       pre-run-script: tests/integration/pre_run_script.sh
       chaos-app-label: app.kubernetes.io/name=indico
