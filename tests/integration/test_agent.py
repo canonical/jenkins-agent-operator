@@ -5,7 +5,7 @@
 
 import logging
 
-# import jenkinsapi.jenkins
+import jenkinsapi.jenkins
 from juju.application import Application
 from juju.model import Model
 
@@ -17,8 +17,8 @@ MICROK8S_CONTROLLER = "controller"
 async def test_agent_relation(
     jenkins_server: Application,
     jenkins_agent_application: Application,
-    # jenkins_client: jenkinsapi.jenkins.Jenkins,
-    # num_agents: int,
+    jenkins_client: jenkinsapi.jenkins.Jenkins,
+    num_agents: int,
 ):
     """
     arrange: given a cross controller cross model jenkins machine agent.
@@ -42,8 +42,7 @@ async def test_agent_relation(
     )
     await model.wait_for_idle(status="active", timeout=1200)
 
-    # nodes = jenkins_client.get_nodes()
-    # assert all(node.is_online() for node in nodes.values())
-    # # One of the nodes is the server node.
-    # assert len(nodes.values()) == num_agents + 1
-    logger.info("%s", jenkins_agent_application.status)
+    nodes = jenkins_client.get_nodes()
+    assert all(node.is_online() for node in nodes.values())
+    # One of the nodes is the server node.
+    assert len(nodes.values()) == num_agents + 1
