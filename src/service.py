@@ -64,16 +64,14 @@ class JenkinsAgentService:
         """Start the agent service."""
         cache = snap.SnapCache()
         agent = cache[SNAP_NAME]
-        credentials = self.state.agent_relation_credentials
-        if not credentials:
-            credentials = Credentials(address="", secret="")
-        agent.set(
-            {
-                "jenkins.token": credentials.secret,
-                "jenkins.url": credentials.address,
-                "jenkins.agent": self.state.agent_meta.name,
-            }
-        )
+        if credentials := self.state.agent_relation_credentials:
+            agent.set(
+                {
+                    "jenkins.token": credentials.secret,
+                    "jenkins.url": credentials.address,
+                    "jenkins.agent": self.state.agent_meta.name,
+                }
+            )
         agent.start()
 
     def stop(self) -> None:
