@@ -116,8 +116,8 @@ async def server_unit_ip_fixture(jenkins_server_model: Model, jenkins_server: Ap
         unit_status: UnitStatus = next(
             iter(status.applications[jenkins_server.name].units.values())
         )
-        assert unit_status.public_address, "Invalid unit address"
-        return unit_status.public_address
+        assert unit_status.address, "Invalid unit address"
+        return unit_status.address
     except StopIteration as exc:
         raise StopIteration("Invalid unit status") from exc
 
