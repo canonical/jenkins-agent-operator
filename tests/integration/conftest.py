@@ -135,7 +135,7 @@ async def jenkins_client_fixture(
 ) -> jenkinsapi.jenkins.Jenkins:
     """The Jenkins API client."""
     jenkins_unit: Unit = jenkins_server.units[0]
-    action: Action = await jenkins_unit.run_action("get-admin-credentials")
+    action: Action = await jenkins_unit.run_action("get-admin-password")
     await action.wait()
     assert action.status == "completed", "Failed to get credentials."
     password = action.results["password"]
