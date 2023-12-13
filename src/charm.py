@@ -66,7 +66,7 @@ class JenkinsAgentCharm(ops.CharmBase):
         """
         self.reconcile(event)
 
-    def reconcile(self, _: ops.EventBase):
+    def reconcile(self, _: ops.EventBase) -> None:
         """Reconciliation for the jenkins agent charm."""
         if not self.model.get_relation(AGENT_RELATION):
             self.model.unit.status = ops.WaitingStatus("Waiting for relation.")

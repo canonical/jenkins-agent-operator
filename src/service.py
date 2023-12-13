@@ -8,7 +8,7 @@ import time
 
 from charms.operator_libs_linux.v2 import snap
 
-from charm_state import State
+from charm_state import Credentials, State
 
 logger = logging.getLogger(__name__)
 SNAP_NAME = "jenkins-agent"
@@ -46,7 +46,7 @@ class JenkinsAgentService:
         service: dict = agent.services.get(SNAP_NAME)
         return bool(service.get("active"))
 
-    def install(self):
+    def install(self) -> None:
         """Install and set up the snap.
 
         Raises:
@@ -55,20 +55,22 @@ class JenkinsAgentService:
         try:
             cache = snap.SnapCache()
             agent = cache[SNAP_NAME]
-
             if not agent.present:
                 agent.ensure(snap.SnapState.Latest, classic=False, channel="latest/edge")
         except snap.SnapError as exc:
             raise SnapInstallError("Error installing the agent charm") from exc
 
-    def start(self):
+    def start(self) -> None:
         """Start the agent service."""
         cache = snap.SnapCache()
         agent = cache[SNAP_NAME]
+        credentials = self.state.agent_relation_credentials
+        if not credentials:
+            credentials = Credentials(address="", secret="")
         agent.set(
             {
-                "jenkins.token": self.state.agent_relation_credentials.secret,
-                "jenkins.url": self.state.agent_relation_credentials.address,
+                "jenkins.token": credentials.secret,
+                "jenkins.url": credentials.address,
                 "jenkins.agent": self.state.agent_meta.name,
             }
         )
