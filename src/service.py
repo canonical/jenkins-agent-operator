@@ -8,7 +8,7 @@ import time
 
 from charms.operator_libs_linux.v2 import snap
 
-from charm_state import Credentials, State
+from charm_state import State
 
 logger = logging.getLogger(__name__)
 SNAP_NAME = "jenkins-agent"
