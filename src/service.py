@@ -135,9 +135,7 @@ class JenkinsAgentService:
             logger.info("Rendering agent configuration")
             logger.debug("%s", environments)
             # file name (override.conf) is important for the service to import envvars
-            self._render_file(
-                f"{config_dir.resolve().as_posix()}/override.conf", rendered, 0o644
-            )
+            self._render_file(f"{config_dir.resolve().as_posix()}/override.conf", rendered, 0o644)
         try:
             systemd.service_restart(AGENT_SERVICE_NAME)
         except systemd.SystemdError as exc:
