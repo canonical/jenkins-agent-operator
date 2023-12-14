@@ -94,7 +94,7 @@ class JenkinsAgentService:
                         # TODO: depends on the series of the charm unit
                         # set the release accordingly
                         release="jammy",
-                        groups=["universal"],
+                        groups=[],
                     )
                 )
                 apt.import_key(PPA_GPG_KEY_ID)
