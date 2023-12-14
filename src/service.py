@@ -4,15 +4,16 @@
 """The agent pebble service module."""
 
 import logging
+import os
+import pwd
 import time
-import os, pwd
+from pathlib import Path
 
 from charms.operator_libs_linux.v0 import apt
 from charms.operator_libs_linux.v1 import systemd
+from jinja2 import Template
 
 from charm_state import State
-from jinja2 import Template
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 AGENT_SERVICE_NAME = "jenkins-agent"
@@ -53,7 +54,7 @@ class JenkinsAgentService:
             mode: access permission mask applied to the
               file using chmod (e.g. 0o640).
         """
-        with open(path, "w+") as file:
+        with open(path, "w+", encoding="utf-8") as file:
             file.write(content)
         # Ensure correct permissions are set on the file.
         os.chmod(path, mode)
@@ -84,13 +85,17 @@ class JenkinsAgentService:
             # Add ppa that hosts the jenkins-agent package
             repositories = apt.RepositoryMapping()
             if "deb-ppa.launchpadcontent.net/tphan025/ppa-jammy" not in repositories:
-                repositories.add(apt.DebianRepository(
-                    enabled=True,
-                    repotype="deb",
-                    uri="https://ppa.launchpadcontent.net/tphan025/ppa/ubuntu/",
-                    # TODO: depends on the series of the charm unit, set the release accordingly
-                    release="jammy",
-                ))
+                repositories.add(
+                    apt.DebianRepository(
+                        enabled=True,
+                        repotype="deb",
+                        uri="https://ppa.launchpadcontent.net/tphan025/ppa/ubuntu/",
+                        # TODO: depends on the series of the charm unit
+                        # set the release accordingly
+                        release="jammy",
+                        groups=["universal"],
+                    )
+                )
             # Install the apt package
             apt.update()
             apt.add_package(AGENT_PACKAGE_NAME)
@@ -101,10 +106,14 @@ class JenkinsAgentService:
             raise PackageInstallError("Error installing the agent package") from exc
 
     def restart(self) -> None:
-        """Start the agent service."""
+        """Start the agent service.
+
+        Raises:
+            ServiceRestartError: when restarting the service fails
+        """
         # Render template and write to appropriate file if only credentials are set
         if credentials := self.state.agent_relation_credentials:
-            with open("templates/jenkins_agent_env.conf.j2", "r") as file:
+            with open("templates/jenkins_agent_env.conf.j2", "r", encoding="utf-8") as file:
                 template = Template(file.read())
             # fetch credentials and set them as environments
             environments = {
@@ -115,23 +124,28 @@ class JenkinsAgentService:
             # render template
             rendered = template.render(environments=environments)
             # Ensure that service conf directory exist
-            config_dir = Path(SYSTEMD_SERVICE_CONF_DIR).mkdir(parents=True, exist_ok=True)
+            config_dir = Path(SYSTEMD_SERVICE_CONF_DIR)
+            config_dir.mkdir(parents=True, exist_ok=True)
             # Write the conf file
-            self._render_file(f"{config_dir}/environment.conf", rendered, 0o644)
+            self._render_file(
+                f"{config_dir.resolve().as_posix()}/environment.conf", rendered, 0o644
+            )
         try:
             systemd.service_restart(AGENT_SERVICE_NAME)
         except systemd.SystemdError as exc:
             raise ServiceRestartError("Error starting the agent service") from exc
         # Check if the service is active
-        # TODO: handle cases where downloading the binary takes a long time but workload still active
+        # TODO: handle cases where downloading the binary takes a long time
         if not self._readiness_check():
-            raise ServiceRestartError(f"Failed readiness check (timed out after {READINESS_CHECK_DELAY} seconds)")
+            raise ServiceRestartError(
+                f"Failed readiness check (timed out after {READINESS_CHECK_DELAY} seconds)"
+            )
 
     def stop(self) -> None:
         """Stop the agent service."""
         try:
             systemd.service_stop(AGENT_SERVICE_NAME)
-        except systemd.SystemdError as _:
+        except systemd.SystemdError:
             # TODO: do we raise exception here?
             logger.debug("service %s failed to stop", AGENT_SERVICE_NAME)
 

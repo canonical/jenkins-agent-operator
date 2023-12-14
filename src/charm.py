@@ -48,7 +48,7 @@ class JenkinsAgentCharm(ops.CharmBase):
         """Handle install event, setup the agent service."""
         try:
             self.jenkins_agent_service.install()
-        except service.SnapInstallError as e:
+        except service.PackageInstallError as e:
             logger.debug("Error installing the agent service %s", e)
             self.unit.status = ops.ErrorStatus("Error installing the agent service")
 
@@ -80,7 +80,7 @@ class JenkinsAgentCharm(ops.CharmBase):
         self.model.unit.status = ops.MaintenanceStatus("Starting agent service.")
         try:
             self.jenkins_agent_service.restart()
-        except service.SnapServiceStartError as e:
+        except service.ServiceRestartError as e:
             logger.debug("Error restarting the agent service %s", e)
             self.model.unit.status = ops.BlockedStatus("Readiness check failed")
         self.model.unit.status = ops.ActiveStatus()
