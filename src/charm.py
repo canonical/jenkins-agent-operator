@@ -92,8 +92,8 @@ class JenkinsAgentCharm(ops.CharmBase):
         )
         if self.jenkins_agent_service.is_active:
             self.unit.status = ops.ActiveStatus()
-        else:
-            self.unit.status = ops.BlockedStatus("Agent service not active")
+        # else:
+        #     self.unit.status = ops.BlockedStatus("Agent service not active")
 
 
 if __name__ == "__main__":  # pragma: no cover

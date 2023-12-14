@@ -18,7 +18,7 @@ from charm_state import State
 logger = logging.getLogger(__name__)
 AGENT_SERVICE_NAME = "jenkins-agent"
 AGENT_PACKAGE_NAME = "jenkins-agent"
-SYSTEMD_SERVICE_CONF_DIR = "etc/systemd/system/jenkins-agent.service.d/"
+SYSTEMD_SERVICE_CONF_DIR = "/etc/systemd/system/jenkins-agent.service.d/"
 PPA_GPG_KEY_ID = "67393A94A577DC24"
 READINESS_CHECK_DELAY = 30
 
@@ -94,12 +94,15 @@ class JenkinsAgentService:
                         # TODO: depends on the series of the charm unit
                         # set the release accordingly
                         release="jammy",
-                        groups=[],
+                        groups=["main"],
                     )
                 )
                 apt.import_key(PPA_GPG_KEY_ID)
             # Install the apt package
             apt.update()
+            # Dependencies
+            apt.add_package("openjdk-17-jre")
+            # Jenkins agent package from PPA
             apt.add_package(AGENT_PACKAGE_NAME)
             systemd.service_restart(AGENT_SERVICE_NAME)
         except systemd.SystemdError as exc:
@@ -129,8 +132,11 @@ class JenkinsAgentService:
             config_dir = Path(SYSTEMD_SERVICE_CONF_DIR)
             config_dir.mkdir(parents=True, exist_ok=True)
             # Write the conf file
+            logger.info("Rendering agent configuration")
+            logger.debug("%s", environments)
+            # file name (override.conf) is important for the service to import envvars
             self._render_file(
-                f"{config_dir.resolve().as_posix()}/environment.conf", rendered, 0o644
+                f"{config_dir.resolve().as_posix()}/override.conf", rendered, 0o644
             )
         try:
             systemd.service_restart(AGENT_SERVICE_NAME)
