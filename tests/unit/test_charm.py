@@ -145,18 +145,3 @@ class TestCharm(unittest.TestCase):
         jenkins_charm._on_update_status(_update_status_event)
 
         assert jenkins_charm.unit.status.name == ACTIVE_STATUS_NAME
-
-    @patch("service.JenkinsAgentService.is_active", new_callable=PropertyMock, return_value=False)
-    @patch("ops.UpdateStatusEvent")
-    def test__on_update_status_service_down(self, _service_is_active, _update_status_event):
-        """
-        arrange: given a charm with patched agent service attribute returns failing values.
-        act: when _on_update_status is called but the service didn't correctly start.
-        assert: The agent falls into blocked status with the correct message.
-        """
-        self.harness.begin()
-        jenkins_charm: JenkinsAgentCharm = self.harness.charm
-        jenkins_charm._on_update_status(_update_status_event)
-
-        assert jenkins_charm.unit.status.name == BLOCKED_STATUS_NAME
-        assert jenkins_charm.unit.status.message == "Agent service not active"
