@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 AGENT_SERVICE_NAME = "jenkins-agent"
 AGENT_PACKAGE_NAME = "jenkins-agent"
 SYSTEMD_SERVICE_CONF_DIR = "etc/systemd/system/jenkins-agent.service.d/"
+PPA_GPG_KEY_ID = "67393A94A577DC24"
 READINESS_CHECK_DELAY = 30
 
 
@@ -96,6 +97,7 @@ class JenkinsAgentService:
                         groups=["universal"],
                     )
                 )
+                apt.import_key(PPA_GPG_KEY_ID)
             # Install the apt package
             apt.update()
             apt.add_package(AGENT_PACKAGE_NAME)
