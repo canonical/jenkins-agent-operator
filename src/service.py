@@ -104,9 +104,6 @@ class JenkinsAgentService:
             apt.add_package("openjdk-17-jre")
             # Jenkins agent package from PPA
             apt.add_package(AGENT_PACKAGE_NAME)
-            systemd.service_restart(AGENT_SERVICE_NAME)
-        except systemd.SystemdError as exc:
-            raise ServiceRestartError("Error starting the agent service") from exc
         except (apt.PackageError, apt.PackageNotFoundError) as exc:
             raise PackageInstallError("Error installing the agent package") from exc
 
@@ -140,12 +137,6 @@ class JenkinsAgentService:
             systemd.service_restart(AGENT_SERVICE_NAME)
         except systemd.SystemdError as exc:
             raise ServiceRestartError("Error starting the agent service") from exc
-        # Check if the service is active
-        # TODO: handle cases where downloading the binary takes a long time
-        if not self._readiness_check():
-            raise ServiceRestartError(
-                f"Failed readiness check (timed out after {READINESS_CHECK_DELAY} seconds)"
-            )
 
     def stop(self) -> None:
         """Stop the agent service."""
@@ -155,7 +146,7 @@ class JenkinsAgentService:
             # TODO: do we raise exception here?
             logger.debug("service %s failed to stop", AGENT_SERVICE_NAME)
 
-    def _readiness_check(self) -> bool:
+    def readiness_check(self) -> bool:
         """Check whether the service was correctly started.
 
         Returns:
