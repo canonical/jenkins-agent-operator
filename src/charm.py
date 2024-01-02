@@ -55,7 +55,12 @@ class JenkinsAgentCharm(ops.CharmBase):
     def _on_config_changed(self, _: ops.ConfigChangedEvent) -> None:
         """Handle config changed event. Update the agent's label in the relation's databag."""
         if agent_relation := self.model.get_relation(AGENT_RELATION):
-            relation_data = self.state.agent_meta.get_jenkins_agent_v0_interface_dict()
+            agent_meta = self.state.agent_meta
+            relation_data = {
+                "executors": str(agent_meta.num_executors),
+                "labels": agent_meta.labels,
+                "name": agent_meta.name,
+            }
             agent_relation.data[self.unit].update(relation_data)
 
     def _on_upgrade_charm(self, event: ops.UpgradeCharmEvent) -> None:
@@ -64,9 +69,17 @@ class JenkinsAgentCharm(ops.CharmBase):
         Args:
             event: The event fired on upgrade charm.
         """
-        self.reconcile(event)
+        self._restart(event)
 
-    def reconcile(self, _: ops.EventBase) -> None:
+    def _on_start(self, event: ops.EventBase) -> None:
+        """Handle on start event.
+
+        Args:
+            event: The event fired on upgrade charm.
+        """
+        self._restart(event)
+
+    def _restart(self, _: ops.EventBase) -> None:
         """Reconciliation for the jenkins agent charm."""
         if not self.model.get_relation(AGENT_RELATION):
             self.model.unit.status = ops.WaitingStatus("Waiting for relation.")
@@ -83,10 +96,17 @@ class JenkinsAgentCharm(ops.CharmBase):
         except service.ServiceRestartError as e:
             logger.debug("Error restarting the agent service %s", e)
             self.model.unit.status = ops.BlockedStatus("Readiness check failed")
+            return
+
+        # TODO: handle cases where downloading the binary takes a long time
+        self.model.unit.status = ops.WaitingStatus("Waiting for agent service to be up.")
+        if not self.jenkins_agent_service.readiness_check():
+            self.model.unit.status = ops.BlockedStatus("Readiness check failed.")
+            return
         self.model.unit.status = ops.ActiveStatus()
 
     def _on_update_status(self, _: ops.UpdateStatusEvent) -> None:
-        """Check status of the snap and report back to juju."""
+        """Check status of the charm and report back to juju."""
         logger.debug(
             "Jenkins agent service is currently up: %s", self.jenkins_agent_service.is_active
         )

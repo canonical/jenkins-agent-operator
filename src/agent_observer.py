@@ -58,7 +58,12 @@ class Observer(ops.Object):
             f"Setting up '{event.relation.name}' relation."
         )
 
-        relation_data = self.state.agent_meta.get_jenkins_agent_v0_interface_dict()
+        agent_meta = self.state.agent_meta
+        relation_data = {
+            "executors": str(agent_meta.num_executors),
+            "labels": agent_meta.labels,
+            "name": agent_meta.name,
+        }
         logger.debug("Agent relation data set: %s", relation_data)
         event.relation.data[self.charm.unit].update(relation_data)
 

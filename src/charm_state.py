@@ -10,9 +10,8 @@ import typing
 from dataclasses import dataclass
 
 import ops
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, Field
 
-import metadata
 
 # agent relation name
 AGENT_RELATION = "agent"
@@ -30,6 +29,20 @@ class Credentials(BaseModel):
 
     address: str
     secret: str
+
+
+class AgentMetadata(BaseModel):
+    """The Jenkins agent metadata.
+
+    Attrs:
+        num_executors: The number of executors available on the unit.
+        labels: The comma separated labels to assign to the agent.
+        name: The name of the agent.
+    """
+
+    num_executors: int = Field(..., ge=1)
+    labels: str
+    name: str
 
 
 class CharmStateBaseError(Exception):
@@ -99,7 +112,7 @@ class State:
         jenkins_agent_service_name: The Jenkins agent workload container name.
     """
 
-    agent_meta: metadata.Agent
+    agent_meta: AgentMetadata
     agent_relation_credentials: typing.Optional[Credentials]
     jenkins_agent_service_name: str = "jenkins-agent"
 
@@ -117,7 +130,7 @@ class State:
             Current state of Jenkins agent.
         """
         try:
-            agent_meta = metadata.Agent(
+            agent_meta = AgentMetadata(
                 num_executors=os.cpu_count() or 0,
                 labels=charm.model.config.get("jenkins_agent_labels", "") or os.uname().machine,
                 name=charm.unit.name.replace("/", "-"),
