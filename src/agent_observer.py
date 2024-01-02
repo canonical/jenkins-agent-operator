@@ -81,7 +81,12 @@ class Observer(ops.Object):
             return
 
         self.charm.unit.status = ops.MaintenanceStatus("Starting jenkins agent service")
-        self.jenkins_agent_service.restart()
+        try:
+            self.jenkins_agent_service.restart()
+        except service.ServiceRestartError as e:
+            logger.debug("Error restarting the agent service %s", e)
+            self.charm.unit.status = ops.BlockedStatus("Agent service failed to start")
+            return
 
         if not self.jenkins_agent_service.is_active:
             # The jenkins server sets credentials one by one, hence if the current credentials are
