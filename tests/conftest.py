@@ -1,7 +1,7 @@
 # Copyright 2023 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-"""Fixtures for Pollen charm tests."""
+"""Fixtures for jenkins-agent charm tests."""
 
 from pytest import Parser
 
