@@ -40,6 +40,7 @@ class JenkinsAgentCharm(ops.CharmBase):
         self.agent_observer = agent_observer.Observer(self, self.state, self.jenkins_agent_service)
 
         self.framework.observe(self.on.install, self._on_install)
+        self.framework.observe(self.on.start, self.reconcile)
         self.framework.observe(self.on.config_changed, self._on_config_changed)
         self.framework.observe(self.on.upgrade_charm, self._on_upgrade_charm)
         self.framework.observe(self.on.update_status, self._on_update_status)
@@ -82,7 +83,7 @@ class JenkinsAgentCharm(ops.CharmBase):
     def _restart(self, _: ops.EventBase) -> None:
         """Reconciliation for the jenkins agent charm."""
         if not self.model.get_relation(AGENT_RELATION):
-            self.model.unit.status = ops.WaitingStatus("Waiting for relation.")
+            self.model.unit.status = ops.BlockedStatus("Waiting for relation.")
             return
 
         if not self.state.agent_relation_credentials:
