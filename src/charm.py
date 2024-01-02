@@ -96,14 +96,9 @@ class JenkinsAgentCharm(ops.CharmBase):
             self.jenkins_agent_service.restart()
         except service.ServiceRestartError as e:
             logger.debug("Error restarting the agent service %s", e)
-            self.model.unit.status = ops.BlockedStatus("Readiness check failed")
+            self.model.unit.status = ops.ErrorStatus("Error restarting the agent service")
             return
 
-        # TODO: handle cases where downloading the binary takes a long time
-        self.model.unit.status = ops.WaitingStatus("Waiting for agent service to be up.")
-        if not self.jenkins_agent_service.readiness_check():
-            self.model.unit.status = ops.BlockedStatus("Readiness check failed.")
-            return
         self.model.unit.status = ops.ActiveStatus()
 
     def _on_update_status(self, _: ops.UpdateStatusEvent) -> None:
