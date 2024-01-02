@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 AGENT_SERVICE_NAME = "jenkins-agent"
 AGENT_PACKAGE_NAME = "jenkins-agent"
 SYSTEMD_SERVICE_CONF_DIR = "/etc/systemd/system/jenkins-agent.service.d/"
+PPA_URI = "https://ppa.launchpadcontent.net/tphan025/ppa/ubuntu/"
 PPA_GPG_KEY_ID = "67393A94A577DC24"
 READINESS_CHECK_DELAY = 30
 
@@ -93,19 +94,17 @@ class JenkinsAgentService:
                     apt.DebianRepository(
                         enabled=True,
                         repotype="deb",
-                        uri="https://ppa.launchpadcontent.net/tphan025/ppa/ubuntu/",
-                        # TODO: depends on the series of the charm unit
+                        uri=PPA_URI,
+                        # TODO: depending on the series of the charm unit
                         # set the release accordingly
                         release="jammy",
                         groups=["main"],
                     )
                 )
                 apt.import_key(PPA_GPG_KEY_ID)
-            # Install the apt package
+            # Install the necessary packages
             apt.update()
-            # Dependencies
             apt.add_package("openjdk-17-jre")
-            # Jenkins agent package from PPA
             apt.add_package(AGENT_PACKAGE_NAME)
         except (apt.PackageError, apt.PackageNotFoundError) as exc:
             raise PackageInstallError("Error installing the agent package") from exc
