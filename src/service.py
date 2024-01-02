@@ -73,13 +73,15 @@ class JenkinsAgentService:
     @property
     def is_active(self) -> bool:
         """Indicate if the jenkins agent service is active."""
-        return systemd.service_running(AGENT_SERVICE_NAME)
+        try:
+            return systemd.service_running(AGENT_SERVICE_NAME)
+        except SystemError as _:
+            return False
 
     def install(self) -> None:
         """Install and set up the jenkins agent apt package.
 
         Raises:
-            ServiceRestartError: if the installation of the snap failed.
             PackageInstallError: if the package installation failed.
         """
         try:
