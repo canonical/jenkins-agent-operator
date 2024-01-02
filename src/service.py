@@ -48,18 +48,16 @@ class JenkinsAgentService:
         """
         self.state = state
 
-    def _render_file(self, path: str, content: str, mode: int) -> None:
+    def _render_file(self, path: Path, content: str, mode: int) -> None:
         """Write a content rendered from a template to a file.
 
         Args:
-            path: the path to the file.
+            path: Path object to the file.
             content: the data to be written to the file.
             mode: access permission mask applied to the
               file using chmod (e.g. 0o640).
         """
-        with open(path, "w+", encoding="utf-8") as file:
-            file.write(content)
-        # Ensure correct permissions are set on the file.
+        path.write_text(content)
         os.chmod(path, mode)
         try:
             # Get the uid/gid for the root user (running the service).
@@ -137,7 +135,8 @@ class JenkinsAgentService:
             logger.info("Rendering agent configuration")
             logger.debug("%s", environments)
             # file name (override.conf) is important for the service to import envvars
-            self._render_file(f"{config_dir.resolve().as_posix()}/override.conf", rendered, 0o644)
+            config_file = Path(SYSTEMD_SERVICE_CONF_DIR / "override.conf")
+            self._render_file(config_file, rendered, 0o644)
         try:
             systemd.service_restart(AGENT_SERVICE_NAME)
             # Check after startup
