@@ -74,7 +74,7 @@ class TestCharm(unittest.TestCase):
         jenkins_charm._on_upgrade_charm(_upgrade_charm_event)
 
         assert jenkins_charm.unit.status.message == "Waiting for relation."
-        assert jenkins_charm.unit.status.name == WAITING_STATUS_NAME
+        assert jenkins_charm.unit.status.name == BLOCKED_STATUS_NAME
 
     # TODO: refactor tests for apt
     # @patch("ops.InstallEvent")
