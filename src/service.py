@@ -134,7 +134,7 @@ class JenkinsAgentService:
             logger.info("Rendering agent configuration")
             logger.debug("%s", environments)
             # file name (override.conf) is important for the service to import envvars
-            config_file = Path(SYSTEMD_SERVICE_CONF_DIR / "override.conf")
+            config_file = Path(f"{SYSTEMD_SERVICE_CONF_DIR}/override.conf")
             self._render_file(config_file, rendered, 0o644)
         try:
             systemd.service_restart(AGENT_SERVICE_NAME)
@@ -143,7 +143,7 @@ class JenkinsAgentService:
 
         # Check if the service is running after startup
         if not self._startup_check():
-            raise ServiceRestartError(f"Error waiting for the agent service to start")
+            raise ServiceRestartError("Error waiting for the agent service to start")
 
     def stop(self) -> None:
         """Stop the agent service."""
@@ -155,6 +155,7 @@ class JenkinsAgentService:
 
     def _startup_check(self) -> bool:
         """Check whether the service was correctly started.
+
         Returns:
             bool: indicate whether the service was started.
         """

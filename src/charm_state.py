@@ -10,8 +10,7 @@ import typing
 from dataclasses import dataclass
 
 import ops
-from pydantic import BaseModel, ValidationError, Field
-
+from pydantic import BaseModel, Field, ValidationError
 
 # agent relation name
 AGENT_RELATION = "agent"
@@ -99,6 +98,22 @@ def _get_credentials_from_agent_relation(
     if not address or not secret:
         return None
     return Credentials(address=address, secret=secret)
+
+
+def get_agent_interface_dict_from_metadata(agent_meta: AgentMetadata) -> dict:
+    """Generate dictionary representation of agent metadata.
+
+    Args:
+        agent_meta: The agent metadata object.
+
+    Returns:
+        A dictionary adhering to jenkins_agent_v0 interface.
+    """
+    return {
+        "executors": str(agent_meta.num_executors),
+        "labels": agent_meta.labels,
+        "name": agent_meta.name,
+    }
 
 
 @dataclass

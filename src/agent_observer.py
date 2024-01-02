@@ -11,7 +11,7 @@ from pathlib import Path
 import ops
 
 import service
-from charm_state import AGENT_RELATION, State
+from charm_state import AGENT_RELATION, State, get_agent_interface_dict_from_metadata
 
 logger = logging.getLogger()
 JENKINS_WORKDIR = Path("/var/snap/jenkins-agent/common/agent")
@@ -58,21 +58,12 @@ class Observer(ops.Object):
             f"Setting up '{event.relation.name}' relation."
         )
 
-        agent_meta = self.state.agent_meta
-        relation_data = {
-            "executors": str(agent_meta.num_executors),
-            "labels": agent_meta.labels,
-            "name": agent_meta.name,
-        }
+        relation_data = get_agent_interface_dict_from_metadata(self.state.agent_meta)
         logger.debug("Setting agent relation unit data: %s", relation_data)
         event.relation.data[self.charm.unit].update(relation_data)
 
     def _on_agent_relation_changed(self, _: ops.RelationChangedEvent) -> None:
-        """Handle agent relation changed event.
-
-        Args:
-            event: The event fired when the agent relation data has changed.
-        """
+        """Handle agent relation changed event."""
         # Check if the pebble service has started and set agent ready.
         if os.path.exists(str(AGENT_READY_PATH)) and self.jenkins_agent_service.is_active:
             logger.warning("Given agent already registered. Skipping.")
