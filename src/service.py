@@ -75,7 +75,8 @@ class JenkinsAgentService:
         """Indicate if the jenkins agent service is active."""
         try:
             return systemd.service_running(AGENT_SERVICE_NAME)
-        except SystemError as _:
+        except SystemError as exc:
+            logger.error("Failed to call systemctl:\n%s", exc)
             return False
 
     def install(self) -> None:
