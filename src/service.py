@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 AGENT_SERVICE_NAME = "jenkins-agent"
 AGENT_PACKAGE_NAME = "jenkins-agent"
 SYSTEMD_SERVICE_CONF_DIR = "/etc/systemd/system/jenkins-agent.service.d/"
-PPA_URI = "https://ppa.launchpadcontent.net/tphan025/ppa/ubuntu/"
+PPA_URI = "https://ppa.launchpadcontent.net/canonical-is-devops/jenkins-agent-charm/ubuntu/"
 PPA_GPG_KEY_ID = "67393A94A577DC24"
 STARTUP_CHECK_TIMEOUT = 60
 STARTUP_CHECK_INTERVAL = 1
@@ -90,7 +90,7 @@ class JenkinsAgentService:
         try:
             # Add ppa that hosts the jenkins-agent package
             repositories = apt.RepositoryMapping()
-            if "deb-ppa.launchpadcontent.net/tphan025/ppa-jammy" not in repositories:
+            if "deb-ppa.launchpadcontent.net/canonical-is-devops/ppa-jammy" not in repositories:
                 repositories.add(
                     apt.DebianRepository(
                         enabled=True,
@@ -107,6 +107,8 @@ class JenkinsAgentService:
             apt.update()
             apt.add_package("openjdk-17-jre")
             apt.add_package(AGENT_PACKAGE_NAME)
+
+            logger.info("Added ppa, list of repositories: %s", repositories.keys())
         except (apt.PackageError, apt.PackageNotFoundError) as exc:
             raise PackageInstallError("Error installing the agent package") from exc
 

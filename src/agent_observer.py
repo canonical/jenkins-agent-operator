@@ -64,46 +64,33 @@ class Observer(ops.Object):
             "labels": agent_meta.labels,
             "name": agent_meta.name,
         }
-        logger.debug("Agent relation data set: %s", relation_data)
+        logger.debug("Setting agent relation unit data: %s", relation_data)
         event.relation.data[self.charm.unit].update(relation_data)
 
-    def _on_agent_relation_changed(self, event: ops.RelationChangedEvent) -> None:
+    def _on_agent_relation_changed(self, _: ops.RelationChangedEvent) -> None:
         """Handle agent relation changed event.
 
         Args:
             event: The event fired when the agent relation data has changed.
         """
-        logger.info("%s relation changed.", event.relation.name)
-
         # Check if the pebble service has started and set agent ready.
         if os.path.exists(str(AGENT_READY_PATH)) and self.jenkins_agent_service.is_active:
             logger.warning("Given agent already registered. Skipping.")
             return
 
+        # If relation data is not yet available to this unit, set its status to waiting
         if not self.state.agent_relation_credentials:
             self.charm.unit.status = ops.WaitingStatus("Waiting for complete relation data.")
             logger.info("Waiting for complete relation data.")
             return
 
+        # Try to start the service with the obtained credentials from relation data
         self.charm.unit.status = ops.MaintenanceStatus("Starting jenkins agent service")
         try:
             self.jenkins_agent_service.restart()
         except service.ServiceRestartError as e:
             logger.debug("Error restarting the agent service %s", e)
             self.charm.unit.status = ops.ErrorStatus("Agent service failed to start")
-            return
-
-        if not self.jenkins_agent_service.is_active:
-            # The jenkins server sets credentials one by one, hence if the current credentials are
-            # not for this particular agent, the agent operator should wait until it receives one
-            # designated for it.
-            logger.warning(
-                "Failed credential for agent %s, will wait for next credentials to be set",
-                self.state.agent_meta.name,
-            )
-            self.charm.unit.status = ops.WaitingStatus(
-                "Failed to start the service. Waiting for another set of credentials"
-            )
             return
 
         self.charm.unit.status = ops.ActiveStatus()
