@@ -21,8 +21,7 @@ AGENT_PACKAGE_NAME = "jenkins-agent"
 SYSTEMD_SERVICE_CONF_DIR = "/etc/systemd/system/jenkins-agent.service.d/"
 PPA_URI = "https://ppa.launchpadcontent.net/canonical-is-devops/jenkins-agent-charm/ubuntu/"
 PPA_GPG_KEY_ID = "67393A94A577DC24"
-STARTUP_CHECK_TIMEOUT = 60
-STARTUP_CHECK_INTERVAL = 1
+STARTUP_CHECK_DELAY = 10
 
 
 class PackageInstallError(Exception):
@@ -139,15 +138,12 @@ class JenkinsAgentService:
             self._render_file(config_file, rendered, 0o644)
         try:
             systemd.service_restart(AGENT_SERVICE_NAME)
-            # Check after startup
-            timeout = time.time() + STARTUP_CHECK_TIMEOUT
-            while time.time() < timeout:
-                if self.is_active:
-                    return self.is_active
-                time.sleep(STARTUP_CHECK_INTERVAL)
-            return self.is_active
         except systemd.SystemdError as exc:
             raise ServiceRestartError(f"Error starting the agent service:\n{exc}") from exc
+
+        # Check if the service is running after startup
+        if not self._startup_check():
+            raise ServiceRestartError(f"Error waiting for the agent service to start")
 
     def stop(self) -> None:
         """Stop the agent service."""
@@ -156,3 +152,11 @@ class JenkinsAgentService:
         except systemd.SystemdError:
             # TODO: do we raise exception here?
             logger.debug("service %s failed to stop", AGENT_SERVICE_NAME)
+
+    def _startup_check(self) -> bool:
+        """Check whether the service was correctly started.
+        Returns:
+            bool: indicate whether the service was started.
+        """
+        time.sleep(STARTUP_CHECK_DELAY)
+        return self.is_active
