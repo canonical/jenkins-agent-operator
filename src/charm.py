@@ -81,7 +81,7 @@ class JenkinsAgentCharm(ops.CharmBase):
         self._restart(event)
 
     def _restart(self, _: ops.EventBase) -> None:
-        """Reconciliation for the jenkins agent charm."""
+        """Restart the jenkins agent charm."""
         if not self.model.get_relation(AGENT_RELATION):
             self.model.unit.status = ops.BlockedStatus("Waiting for relation.")
             return
