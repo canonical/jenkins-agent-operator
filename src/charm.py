@@ -51,7 +51,11 @@ class JenkinsAgentCharm(ops.CharmBase):
         self.framework.observe(self.on.update_status, self._on_update_status)
 
     def _on_install(self, _: ops.InstallEvent) -> None:
-        """Handle install event, setup the agent service."""
+        """Handle install event, setup the agent service.
+
+        Raises:
+            RuntimeError: when the installation of the agent service fails
+        """
         try:
             self.jenkins_agent_service.install()
         except service.PackageInstallError as exc:

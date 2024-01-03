@@ -56,11 +56,7 @@ class UnitData(BaseModel):
     series: Literal["focal", "jammy"]
 
 
-class CharmStateBaseError(Exception):
-    """Represents error with charm state."""
-
-
-class InvalidStateError(CharmStateBaseError):
+class InvalidStateError(Exception):
     """Exception raised when state configuration is invalid."""
 
     def __init__(self, msg: str = ""):

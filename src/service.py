@@ -67,6 +67,9 @@ class JenkinsAgentService:
             content: the data to be written to the file.
             mode: access permission mask applied to the
               file using chmod (e.g. 0o640).
+
+        Raises:
+            FileRenderError: if interaction with the filesystem fails
         """
         try:
             path.write_text(content)
@@ -161,12 +164,16 @@ class JenkinsAgentService:
             raise ServiceRestartError("Error waiting for the agent service to start")
 
     def stop(self) -> None:
-        """Stop the agent service."""
+        """Stop the agent service.
+
+        Raises:
+            ServiceStopError: if systemctl stop returns a non-zero exit code.
+        """
         try:
             systemd.service_stop(AGENT_SERVICE_NAME)
-        except systemd.SystemdError:
+        except systemd.SystemdError as exc:
             logger.error("service %s failed to stop", AGENT_SERVICE_NAME)
-            raise ServiceStopError(f"service {AGENT_SERVICE_NAME} failed to stop")
+            raise ServiceStopError(f"service {AGENT_SERVICE_NAME} failed to stop") from exc
 
     def _startup_check(self) -> bool:
         """Check whether the service was correctly started.
