@@ -84,12 +84,8 @@ def _get_jenkins_unit(
     Returns:
         The Jenkins server application unit in the relation if found. None otherwise.
     """
-    for unit in all_units:
-        # if the unit's application name is the same, this is peer unit. Otherwise, it is the
-        # Jenkins server unit.
-        if unit.app.name == current_app_name:
-            continue
-        return unit
+    if jenkins_unit := [unit for unit in all_units if unit.app.name != current_app_name]:
+        return jenkins_unit[0]
     return None
 
 
