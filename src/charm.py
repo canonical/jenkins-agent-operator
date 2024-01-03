@@ -94,9 +94,9 @@ class JenkinsAgentCharm(ops.CharmBase):
         self.model.unit.status = ops.MaintenanceStatus("Starting agent service.")
         try:
             self.jenkins_agent_service.restart()
-        except service.ServiceRestartError as e:
-            logger.debug("Error restarting the agent service %s", e)
-            self.model.unit.status = ops.ErrorStatus("Error restarting the agent service")
+        except service.ServiceRestartError as exc:
+            logger.error("Error restarting the agent service %s", exc)
+            raise RuntimeError("Error restarting the agent service") from exc
             return
 
         self.model.unit.status = ops.ActiveStatus()

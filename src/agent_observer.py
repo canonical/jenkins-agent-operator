@@ -79,10 +79,10 @@ class Observer(ops.Object):
         self.charm.unit.status = ops.MaintenanceStatus("Starting jenkins agent service")
         try:
             self.jenkins_agent_service.restart()
-        except service.ServiceRestartError as e:
-            logger.debug("Error restarting the agent service %s", e)
-            self.charm.unit.status = ops.ErrorStatus("Agent service failed to start")
-            return
+        except service.ServiceRestartError as exc:
+            logger.error("Error restarting the agent service %s", exc)
+            raise RuntimeError("Error restarting the agent service") from exc
+
 
         self.charm.unit.status = ops.ActiveStatus()
 
