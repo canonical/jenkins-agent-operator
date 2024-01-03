@@ -50,7 +50,7 @@ class JenkinsAgentCharm(ops.CharmBase):
         self.framework.observe(self.on.upgrade_charm, self._on_upgrade_charm)
         self.framework.observe(self.on.update_status, self._on_update_status)
 
-    def _on_install(self, _) -> None:
+    def _on_install(self, _: ops.InstallEvent) -> None:
         """Handle install event, setup the agent service.
 
         Raises:
@@ -62,7 +62,7 @@ class JenkinsAgentCharm(ops.CharmBase):
             logger.error("Error installing the agent service %s", exc)
             raise RuntimeError("Error installing the agent service") from exc
 
-    def _on_config_changed(self, _) -> None:
+    def _on_config_changed(self, _: ops.ConfigChangedEvent) -> None:
         """Handle config changed event. Update the agent's label in the relation's databag."""
         if agent_relation := self.model.get_relation(AGENT_RELATION):
             relation_data = get_agent_interface_dict_from_metadata(self.state.agent_meta)
@@ -108,7 +108,7 @@ class JenkinsAgentCharm(ops.CharmBase):
 
         self.model.unit.status = ops.ActiveStatus()
 
-    def _on_update_status(self, _) -> None:
+    def _on_update_status(self, _: ops.UpdateStatusEvent) -> None:
         """Check status of the charm and report back to juju."""
         logger.debug(
             "Jenkins agent service is currently up: %s", self.jenkins_agent_service.is_active
