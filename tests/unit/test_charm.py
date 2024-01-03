@@ -76,47 +76,6 @@ class TestCharm(unittest.TestCase):
         assert jenkins_charm.unit.status.message == "Waiting for relation."
         assert jenkins_charm.unit.status.name == BLOCKED_STATUS_NAME
 
-    # TODO: refactor tests for apt
-    # @patch("ops.InstallEvent")
-    # @patch("charms.operator_libs_linux.v2.snap.SnapCache")
-    # def test__on_install(
-    #     self,
-    #     _snap_cache,
-    #     _install_event,
-    # ):
-    #     """
-    #     arrange: given a charm with patched snapCache and the agent snap is not present.
-    #     act: when _on_install is called.
-    #     assert: The charm calls "ensure" to install the agent snap.
-    #     """
-    #     jenkins_agent_snap = _snap_cache.return_value[service.SNAP_NAME]
-    #     jenkins_agent_snap.present = False
-
-    #     self.harness.begin()
-    #     jenkins_charm: JenkinsAgentCharm = self.harness.charm
-    #     jenkins_charm._on_install(_install_event)
-
-    #     assert jenkins_agent_snap.ensure.call_count == 1
-
-    # @patch("ops.UpdateStatusEvent")
-    # @patch("charms.operator_libs_linux.v2.snap.SnapCache")
-    # def test__on_install_snap_install_error(self, _snap_cache, _update_status_event):
-    #     """
-    #     arrange: given a charm with patched snapCache and the agent snap is not present.
-    #     act: when _on_install is called but the snap installation fails.
-    #     assert: The agent falls into error status with the correct message.
-    #     """
-    #     jenkins_agent_snap = _snap_cache.return_value[service.SNAP_NAME]
-    #     jenkins_agent_snap.present = False
-    #     jenkins_agent_snap.ensure.side_effect = snap.SnapError
-
-    #     self.harness.begin()
-    #     jenkins_charm: JenkinsAgentCharm = self.harness.charm
-    #     jenkins_charm._on_install(_update_status_event)
-
-    #     assert jenkins_agent_snap.ensure.call_count == 1
-    #     assert jenkins_charm.unit.status.name == ERROR_STATUS_NAME
-
     @patch("ops.ConfigChangedEvent")
     @patch("ops.Model.get_relation")
     def test__on_config_changed(self, _get_relation_mock, _config_changed_event):
