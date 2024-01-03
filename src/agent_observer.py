@@ -63,7 +63,11 @@ class Observer(ops.Object):
         event.relation.data[self.charm.unit].update(relation_data)
 
     def _on_agent_relation_changed(self, _: ops.RelationChangedEvent) -> None:
-        """Handle agent relation changed event."""
+        """Handle agent relation changed event.
+
+        Raises:
+            RuntimeError: when the service fails to properly start.
+        """
         # Check if the pebble service has started and set agent ready.
         if os.path.exists(str(AGENT_READY_PATH)) and self.jenkins_agent_service.is_active:
             logger.warning("Given agent already registered. Skipping.")
@@ -82,7 +86,6 @@ class Observer(ops.Object):
         except service.ServiceRestartError as exc:
             logger.error("Error restarting the agent service %s", exc)
             raise RuntimeError("Error restarting the agent service") from exc
-
 
         self.charm.unit.status = ops.ActiveStatus()
 

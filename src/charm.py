@@ -81,7 +81,11 @@ class JenkinsAgentCharm(ops.CharmBase):
         self._restart(event)
 
     def _restart(self, _: ops.EventBase) -> None:
-        """Restart the jenkins agent charm."""
+        """Restart the jenkins agent charm.
+
+        Raises:
+            RuntimeError: when the service fails to properly start.
+        """
         if not self.model.get_relation(AGENT_RELATION):
             self.model.unit.status = ops.BlockedStatus("Waiting for relation.")
             return
@@ -97,7 +101,6 @@ class JenkinsAgentCharm(ops.CharmBase):
         except service.ServiceRestartError as exc:
             logger.error("Error restarting the agent service %s", exc)
             raise RuntimeError("Error restarting the agent service") from exc
-            return
 
         self.model.unit.status = ops.ActiveStatus()
 
