@@ -117,25 +117,29 @@ class JenkinsAgentService:
             ServiceRestartError: when restarting the service fails
         """
         # Render template and write to appropriate file if only credentials are set
-        if credentials := self.state.agent_relation_credentials:
-            with open("templates/jenkins_agent_env.conf.j2", "r", encoding="utf-8") as file:
-                template = Template(file.read())
-            # fetch credentials and set them as environments
-            environments = {
-                "JENKINS_TOKEN": credentials.secret,
-                "JENKINS_URL": credentials.address,
-                "JENKINS_AGENT": self.state.agent_meta.name,
-            }
-            # render template
-            rendered = template.render(environments=environments)
-            # Ensure that service conf directory exist
-            config_dir = Path(SYSTEMD_SERVICE_CONF_DIR)
-            config_dir.mkdir(parents=True, exist_ok=True)
-            # Write the conf file
-            logger.info("Rendering agent configuration")
-            logger.debug("%s", environments)
-            config_file = Path(f"{SYSTEMD_SERVICE_CONF_DIR}/override.conf")
-            self._render_file(config_file, rendered, 0o644)
+        credentials = self.state.agent_relation_credentials
+        if not credentials:
+            raise ServiceRestartError("Error starting the agent service: missing configuration")
+
+        with open("templates/jenkins_agent_env.conf.j2", "r", encoding="utf-8") as file:
+            template = Template(file.read())
+        # fetch credentials and set them as environments
+        environments = {
+            "JENKINS_TOKEN": credentials.secret,
+            "JENKINS_URL": credentials.address,
+            "JENKINS_AGENT": self.state.agent_meta.name,
+        }
+        # render template
+        rendered = template.render(environments=environments)
+        # Ensure that service conf directory exist
+        config_dir = Path(SYSTEMD_SERVICE_CONF_DIR)
+        config_dir.mkdir(parents=True, exist_ok=True)
+        # Write the conf file
+        logger.info("Rendering agent configuration")
+        logger.debug("%s", environments)
+        config_file = Path(f"{SYSTEMD_SERVICE_CONF_DIR}/override.conf")
+        self._render_file(config_file, rendered, 0o644)
+
         try:
             systemd.daemon_reload()
             systemd.service_restart(AGENT_SERVICE_NAME)
@@ -152,7 +156,7 @@ class JenkinsAgentService:
             systemd.service_stop(AGENT_SERVICE_NAME)
         except systemd.SystemdError:
             # TODO: do we raise exception here?
-            logger.debug("service %s failed to stop", AGENT_SERVICE_NAME)
+            logger.error("service %s failed to stop", AGENT_SERVICE_NAME)
 
     def _startup_check(self) -> bool:
         """Check whether the service was correctly started.
