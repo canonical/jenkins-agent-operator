@@ -8,9 +8,11 @@ import logging
 import os
 import typing
 from dataclasses import dataclass
+from subprocess import check_output
 
 import ops
 from pydantic import BaseModel, Field, ValidationError
+from pydantic.typing import Literal
 
 # agent relation name
 AGENT_RELATION = "agent"
@@ -30,7 +32,7 @@ class Credentials(BaseModel):
     secret: str
 
 
-class AgentMetadata(BaseModel):
+class AgentMeta(BaseModel):
     """The Jenkins agent metadata.
 
     Attrs:
@@ -42,6 +44,16 @@ class AgentMetadata(BaseModel):
     num_executors: int = Field(..., ge=1)
     labels: str
     name: str
+
+
+class UnitData(BaseModel):
+    """The charm's unit data.
+
+    Attrs:
+        series: The base of the machine on which the charm is running.
+    """
+
+    series: Literal["focal", "jammy"]
 
 
 class CharmStateBaseError(Exception):
@@ -100,7 +112,7 @@ def _get_credentials_from_agent_relation(
     return Credentials(address=address, secret=secret)
 
 
-def get_agent_interface_dict_from_metadata(agent_meta: AgentMetadata) -> dict:
+def get_agent_interface_dict_from_metadata(agent_meta: AgentMeta) -> dict:
     """Generate dictionary representation of agent metadata.
 
     Args:
@@ -124,11 +136,13 @@ class State:
         agent_meta: The Jenkins agent metadata to register on Jenkins server.
         agent_relation_credentials: The full set of credentials from the agent relation. None if
             partial data is set or the credentials do not belong to current agent.
+        unit_data: Data about the current unit.
         jenkins_agent_service_name: The Jenkins agent workload container name.
     """
 
-    agent_meta: AgentMetadata
+    agent_meta: AgentMeta
     agent_relation_credentials: typing.Optional[Credentials]
+    unit_data: UnitData
     jenkins_agent_service_name: str = "jenkins-agent"
 
     @classmethod
@@ -145,8 +159,8 @@ class State:
             Current state of Jenkins agent.
         """
         try:
-            agent_meta = AgentMetadata(
-                num_executors=os.cpu_count() or 0,
+            agent_meta = AgentMeta(
+                num_executors=os.cpu_count(),
                 labels=charm.model.config.get("jenkins_agent_labels", "") or os.uname().machine,
                 name=charm.unit.name.replace("/", "-"),
             )
@@ -163,7 +177,18 @@ class State:
                 agent_relation.data[agent_relation_jenkins_unit], agent_meta.name
             )
 
+        # From: https://discourse.charmhub.io/t/how-to-get-the-series-information-from-a-unit/7013
+        unit_series = (
+            check_output("lsb_release -a".split()).splitlines()[3].split(b":")[1].strip().decode()
+        )
+        try:
+            unit_data = UnitData(series=unit_series)
+        except ValidationError as exc:
+            logging.error("Unsupported series, %s: %s", unit_series, exc)
+            raise InvalidStateError("Unsupported series.") from exc
+
         return cls(
             agent_meta=agent_meta,
             agent_relation_credentials=agent_relation_credentials,
+            unit_data=unit_data,
         )

@@ -20,8 +20,12 @@ AGENT_SERVICE_NAME = "jenkins-agent"
 AGENT_PACKAGE_NAME = "jenkins-agent"
 SYSTEMD_SERVICE_CONF_DIR = "/etc/systemd/system/jenkins-agent.service.d/"
 PPA_URI = "https://ppa.launchpadcontent.net/canonical-is-devops/jenkins-agent-charm/ubuntu/"
-PPA_GPG_KEY_ID = "67393A94A577DC24"
-STARTUP_CHECK_DELAY = 10
+PPA_DEB_SRC = "deb-https://ppa.launchpadcontent.net/canonical-is-devops/jenkins-agent-charm/ubuntu/-"  # noqa: E501 pylint: disable=line-too-long
+PPA_GPG_KEY_ID = "ad4196d35c25cdac"
+STARTUP_CHECK_TIMEOUT = 30
+STARTUP_CHECK_INTERVAL = 2
+JENKINS_HOME = Path("/var/lib/jenkins")
+AGENT_READY_PATH = Path(JENKINS_HOME / ".ready")
 
 
 class PackageInstallError(Exception):
@@ -86,16 +90,15 @@ class JenkinsAgentService:
         """
         try:
             # Add ppa that hosts the jenkins-agent package
+            series = self.state.unit_data.series
             repositories = apt.RepositoryMapping()
-            if "deb-ppa.launchpadcontent.net/canonical-is-devops/ppa-jammy" not in repositories:
+            if f"{PPA_DEB_SRC}-{series}" not in repositories:
                 repositories.add(
                     apt.DebianRepository(
                         enabled=True,
                         repotype="deb",
                         uri=PPA_URI,
-                        # TODO: depending on the series of the charm unit
-                        # set the release accordingly
-                        release="jammy",
+                        release=series,
                         groups=["main"],
                     )
                 )
@@ -104,8 +107,6 @@ class JenkinsAgentService:
             apt.update()
             apt.add_package("openjdk-17-jre")
             apt.add_package(AGENT_PACKAGE_NAME)
-
-            logger.info("Added ppa, list of repositories: %s", repositories.keys())
         except (apt.PackageError, apt.PackageNotFoundError) as exc:
             raise PackageInstallError("Error installing the agent package") from exc
 
@@ -133,10 +134,10 @@ class JenkinsAgentService:
             # Write the conf file
             logger.info("Rendering agent configuration")
             logger.debug("%s", environments)
-            # file name (override.conf) is important for the service to import envvars
             config_file = Path(f"{SYSTEMD_SERVICE_CONF_DIR}/override.conf")
             self._render_file(config_file, rendered, 0o644)
         try:
+            systemd.daemon_reload()
             systemd.service_restart(AGENT_SERVICE_NAME)
         except systemd.SystemdError as exc:
             raise ServiceRestartError(f"Error starting the agent service:\n{exc}") from exc
@@ -159,5 +160,10 @@ class JenkinsAgentService:
         Returns:
             bool: indicate whether the service was started.
         """
-        time.sleep(STARTUP_CHECK_DELAY)
-        return self.is_active
+        timeout = time.time() + STARTUP_CHECK_TIMEOUT
+        while time.time() < timeout:
+            time.sleep(STARTUP_CHECK_INTERVAL)
+            service_up = os.path.exists(str(AGENT_READY_PATH)) and self.is_active
+            if service_up:
+                break
+        return os.path.exists(str(AGENT_READY_PATH)) and self.is_active

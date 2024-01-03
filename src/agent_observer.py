@@ -5,8 +5,6 @@
 
 
 import logging
-import os
-from pathlib import Path
 
 import ops
 
@@ -14,8 +12,6 @@ import service
 from charm_state import AGENT_RELATION, State, get_agent_interface_dict_from_metadata
 
 logger = logging.getLogger()
-JENKINS_WORKDIR = Path("/var/snap/jenkins-agent/common/agent")
-AGENT_READY_PATH = Path(JENKINS_WORKDIR / ".ready")
 
 
 class Observer(ops.Object):
@@ -68,8 +64,8 @@ class Observer(ops.Object):
         Raises:
             RuntimeError: when the service fails to properly start.
         """
-        # Check if the pebble service has started and set agent ready.
-        if os.path.exists(str(AGENT_READY_PATH)) and self.jenkins_agent_service.is_active:
+        # Check if the jenkins agent service has started and set agent ready.
+        if self.jenkins_agent_service.is_active:
             logger.warning("Given agent already registered. Skipping.")
             return
 
