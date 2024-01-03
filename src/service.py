@@ -36,6 +36,10 @@ class ServiceRestartError(Exception):
     """Exception raised when failing to start the agent service."""
 
 
+class FileRenderError(Exception):
+    """Exception raised when failing to interact with a file in the filesystem."""
+
+
 class JenkinsAgentService:
     """Jenkins agent service class.
 
@@ -60,18 +64,17 @@ class JenkinsAgentService:
             mode: access permission mask applied to the
               file using chmod (e.g. 0o640).
         """
-        path.write_text(content)
-        os.chmod(path, mode)
         try:
+            path.write_text(content)
+            os.chmod(path, mode)
             # Get the uid/gid for the root user (running the service).
             # TODO: the user running the jenkins agent is currently root
             # we should replace this by defining a dedicated user in the apt package
             u = pwd.getpwnam("root")
             # Set the correct ownership for the file.
             os.chown(path, uid=u.pw_uid, gid=u.pw_gid)
-        except KeyError:
-            # Ignore non existing user error when it wasn't created yet.
-            pass
+        except Exception as exc:
+            raise FileRenderError("Error rendering file") from exc
 
     @property
     def is_active(self) -> bool:
@@ -129,7 +132,7 @@ class JenkinsAgentService:
             "JENKINS_URL": credentials.address,
             "JENKINS_AGENT": self.state.agent_meta.name,
         }
-        # render template
+        # render template file
         rendered = template.render(environments=environments)
         # Ensure that service conf directory exist
         config_dir = Path(SYSTEMD_SERVICE_CONF_DIR)
@@ -138,13 +141,16 @@ class JenkinsAgentService:
         logger.info("Rendering agent configuration")
         logger.debug("%s", environments)
         config_file = Path(f"{SYSTEMD_SERVICE_CONF_DIR}/override.conf")
-        self._render_file(config_file, rendered, 0o644)
-
         try:
+            self._render_file(config_file, rendered, 0o644)
             systemd.daemon_reload()
             systemd.service_restart(AGENT_SERVICE_NAME)
         except systemd.SystemdError as exc:
             raise ServiceRestartError(f"Error starting the agent service:\n{exc}") from exc
+        except FileRenderError as exc:
+            raise ServiceRestartError(
+                "Error interacting with the filesystem when rendering configuration file"
+            ) from exc
 
         # Check if the service is running after startup
         if not self._startup_check():
