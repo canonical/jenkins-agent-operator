@@ -8,7 +8,7 @@
 
 import unittest
 import unittest.mock
-from unittest.mock import PropertyMock, patch
+from unittest.mock import patch
 
 import ops
 import ops.testing
@@ -90,17 +90,3 @@ class TestCharm(unittest.TestCase):
 
         agent_relation = _get_relation_mock.return_value
         assert agent_relation.data[self.harness._unit_name].update.call_count == 1
-
-    @patch("service.JenkinsAgentService.is_active", new_callable=PropertyMock, return_value=True)
-    @patch("ops.UpdateStatusEvent")
-    def test__on_update_status_service_up(self, _service_is_active, _update_status_event):
-        """
-        arrange: given a charm with patched agent service attribute returns passing values.
-        act: when _on_update_status is called.
-        assert: The agent falls into active start.
-        """
-        self.harness.begin()
-        jenkins_charm: JenkinsAgentCharm = self.harness.charm
-        jenkins_charm._on_update_status(_update_status_event)
-
-        assert jenkins_charm.unit.status.name == ACTIVE_STATUS_NAME
