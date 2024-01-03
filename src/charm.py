@@ -54,9 +54,9 @@ class JenkinsAgentCharm(ops.CharmBase):
         """Handle install event, setup the agent service."""
         try:
             self.jenkins_agent_service.install()
-        except service.PackageInstallError as e:
-            logger.debug("Error installing the agent service %s", e)
-            self.unit.status = ops.ErrorStatus("Error installing the agent service")
+        except service.PackageInstallError as exc:
+            logger.error("Error installing the agent service %s", exc)
+            raise RuntimeError("Error installing the agent service") from exc
 
     def _on_config_changed(self, _: ops.ConfigChangedEvent) -> None:
         """Handle config changed event. Update the agent's label in the relation's databag."""
