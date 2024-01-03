@@ -36,6 +36,10 @@ class ServiceRestartError(Exception):
     """Exception raised when failing to start the agent service."""
 
 
+class ServiceStopError(Exception):
+    """Exception raised when failing to stop the agent service."""
+
+
 class FileRenderError(Exception):
     """Exception raised when failing to interact with a file in the filesystem."""
 
@@ -161,8 +165,8 @@ class JenkinsAgentService:
         try:
             systemd.service_stop(AGENT_SERVICE_NAME)
         except systemd.SystemdError:
-            # TODO: do we raise exception here?
             logger.error("service %s failed to stop", AGENT_SERVICE_NAME)
+            raise ServiceStopError(f"service {AGENT_SERVICE_NAME} failed to stop")
 
     def _startup_check(self) -> bool:
         """Check whether the service was correctly started.

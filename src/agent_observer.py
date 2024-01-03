@@ -87,5 +87,9 @@ class Observer(ops.Object):
 
     def _on_agent_relation_departed(self, _: ops.RelationDepartedEvent) -> None:
         """Handle agent relation departed event."""
-        self.jenkins_agent_service.stop()
+        try:
+            self.jenkins_agent_service.stop()
+        except service.ServiceStopError as exc:
+            self.charm.unit.status = ops.BlockedStatus(exc)
+            return
         self.charm.unit.status = ops.BlockedStatus("Waiting for config/relation.")
