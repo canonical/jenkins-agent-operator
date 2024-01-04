@@ -59,7 +59,7 @@ class JenkinsAgentCharm(ops.CharmBase):
     def _on_config_changed(self, _: ops.ConfigChangedEvent) -> None:
         """Handle config changed event. Update the agent's label in the relation's databag."""
         if agent_relation := self.model.get_relation(AGENT_RELATION):
-            relation_data = self.state.agent_meta.model_dump()
+            relation_data = self.state.agent_meta.as_dict()
             agent_relation.data[self.unit].update(relation_data)
 
     def _on_upgrade_charm(self, event: ops.UpgradeCharmEvent) -> None:
