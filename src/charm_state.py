@@ -8,9 +8,9 @@ import logging
 import os
 import typing
 from dataclasses import dataclass
-from subprocess import check_output
 
 import ops
+from dotenv import dotenv_values
 from pydantic import BaseModel, Field, SerializationInfo, ValidationError, field_serializer
 from typing_extensions import Literal
 
@@ -180,10 +180,9 @@ class State:
                 agent_relation.data[agent_relation_jenkins_unit], agent_meta.name
             )
 
-        # From: https://discourse.charmhub.io/t/how-to-get-the-series-information-from-a-unit/7013
-        unit_series = (
-            check_output("lsb_release -a".split()).splitlines()[3].split(b":")[1].strip().decode()
-        )
+        # Load series information
+        os_release: dict = dotenv_values("/etc/os-release")
+        unit_series = os_release.get("UBUNTU_CODENAME")
         try:
             unit_data = UnitData(series=unit_series)
         except ValidationError as exc:
