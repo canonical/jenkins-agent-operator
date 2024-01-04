@@ -80,8 +80,8 @@ class JenkinsAgentService:
             u = pwd.getpwnam("root")
             # Set the correct ownership for the file.
             os.chown(path, uid=u.pw_uid, gid=u.pw_gid)
-        except Exception as exc:
-            raise FileRenderError("Error rendering file") from exc
+        except (OSError, KeyError, TypeError) as exc:
+            raise FileRenderError(f"Error rendering file:\n{exc}") from exc
 
     @property
     def is_active(self) -> bool:

@@ -11,8 +11,8 @@ from dataclasses import dataclass
 from subprocess import check_output
 
 import ops
-from pydantic import BaseModel, Field, ValidationError
-from pydantic.typing import Literal
+from pydantic import BaseModel, Field, SerializationInfo, ValidationError, field_serializer
+from typing_extensions import Literal
 
 # agent relation name
 AGENT_RELATION = "agent"
@@ -36,14 +36,26 @@ class AgentMeta(BaseModel):
     """The Jenkins agent metadata.
 
     Attrs:
-        num_executors: The number of executors available on the unit.
+        executors: The number of executors available on the unit.
         labels: The comma separated labels to assign to the agent.
         name: The name of the agent.
     """
 
-    num_executors: int = Field(..., ge=1)
+    executors: int = Field(..., ge=1)
     labels: str
     name: str
+
+    @field_serializer("executors")
+    def serialize_executors(self, executors: int, _info: SerializationInfo) -> str:
+        """Serialize executors attribute, convert to str.
+
+        Args:
+            executors: Attribute to serialize.
+
+        Returns:
+            The string value of the attribute
+        """
+        return str(executors)
 
 
 class UnitData(BaseModel):
@@ -113,7 +125,7 @@ def get_agent_interface_dict_from_metadata(agent_meta: AgentMeta) -> dict:
         A dictionary adhering to jenkins_agent_v0 interface.
     """
     return {
-        "executors": str(agent_meta.num_executors),
+        "executors": str(agent_meta.executors),
         "labels": agent_meta.labels,
         "name": agent_meta.name,
     }
@@ -151,7 +163,7 @@ class State:
         """
         try:
             agent_meta = AgentMeta(
-                num_executors=os.cpu_count(),
+                executors=os.cpu_count(),
                 labels=charm.model.config.get("jenkins_agent_labels", "") or os.uname().machine,
                 name=charm.unit.name.replace("/", "-"),
             )

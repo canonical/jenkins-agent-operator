@@ -14,12 +14,7 @@ from ops.main import main
 
 import agent_observer
 import service
-from charm_state import (
-    AGENT_RELATION,
-    InvalidStateError,
-    State,
-    get_agent_interface_dict_from_metadata,
-)
+from charm_state import AGENT_RELATION, InvalidStateError, State
 
 logger = logging.getLogger()
 
@@ -64,7 +59,7 @@ class JenkinsAgentCharm(ops.CharmBase):
     def _on_config_changed(self, _: ops.ConfigChangedEvent) -> None:
         """Handle config changed event. Update the agent's label in the relation's databag."""
         if agent_relation := self.model.get_relation(AGENT_RELATION):
-            relation_data = get_agent_interface_dict_from_metadata(self.state.agent_meta)
+            relation_data = self.state.agent_meta.model_dump()
             agent_relation.data[self.unit].update(relation_data)
 
     def _on_upgrade_charm(self, event: ops.UpgradeCharmEvent) -> None:

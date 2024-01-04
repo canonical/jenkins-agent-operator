@@ -9,7 +9,7 @@ import logging
 import ops
 
 import service
-from charm_state import AGENT_RELATION, State, get_agent_interface_dict_from_metadata
+from charm_state import AGENT_RELATION, State
 
 logger = logging.getLogger()
 
@@ -54,7 +54,7 @@ class Observer(ops.Object):
             f"Setting up '{event.relation.name}' relation."
         )
 
-        relation_data = get_agent_interface_dict_from_metadata(self.state.agent_meta)
+        relation_data = self.state.agent_meta.model_dump()
         logger.debug("Setting agent relation unit data: %s", relation_data)
         event.relation.data[self.charm.unit].update(relation_data)
 
