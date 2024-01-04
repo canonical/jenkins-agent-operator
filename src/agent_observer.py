@@ -54,7 +54,7 @@ class Observer(ops.Object):
             f"Setting up '{event.relation.name}' relation."
         )
 
-        relation_data = self.state.agent_meta.model_dump()
+        relation_data = self.state.agent_meta.as_dict()
         logger.debug("Setting agent relation unit data: %s", relation_data)
         event.relation.data[self.charm.unit].update(relation_data)
 
