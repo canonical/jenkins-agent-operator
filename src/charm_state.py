@@ -80,9 +80,8 @@ def _get_jenkins_unit(
     Returns:
         The Jenkins server application unit in the relation if found. None otherwise.
     """
-    if jenkins_unit := [unit for unit in all_units if unit.app.name != current_app_name]:
-        return jenkins_unit[0]
-    return None
+    jenkins_unit = [unit for unit in all_units if unit.app.name != current_app_name]
+    return jenkins_unit[0] if jenkins_unit else None
 
 
 def _get_credentials_from_agent_relation(
