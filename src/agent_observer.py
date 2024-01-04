@@ -65,6 +65,7 @@ class Observer(ops.Object):
             RuntimeError: when the service fails to properly start.
         """
         # Check if the jenkins agent service has started and set agent ready.
+        # This is to prevent relation data from other units to trigger a service restart.
         if self.jenkins_agent_service.is_active:
             logger.warning("Given agent already registered. Skipping.")
             return

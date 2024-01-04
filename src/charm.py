@@ -68,7 +68,7 @@ class JenkinsAgentCharm(ops.CharmBase):
         Args:
             event: The event fired on upgrade charm.
         """
-        self._restart(event)
+        self.restart_agent_service(event)
 
     def _on_start(self, event: ops.EventBase) -> None:
         """Handle on start event.
@@ -76,9 +76,9 @@ class JenkinsAgentCharm(ops.CharmBase):
         Args:
             event: The event fired on upgrade charm.
         """
-        self._restart(event)
+        self.restart_agent_service(event)
 
-    def _restart(self, _: ops.EventBase) -> None:
+    def restart_agent_service(self, _: ops.EventBase) -> None:
         """Restart the jenkins agent charm.
 
         Raises:
