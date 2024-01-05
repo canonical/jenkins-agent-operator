@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 NUM_AGENT_UNITS = 1
 
+
 @pytest_asyncio.fixture(scope="module", name="charm")
 async def charm_fixture(request: pytest.FixtureRequest, ops_test: OpsTest) -> str:
     """The path to charm."""
@@ -41,12 +42,6 @@ def model_fixture(ops_test: OpsTest) -> Model:
     return ops_test.model
 
 
-@pytest.fixture(scope="module", name="num_agents")
-def num_agents_fixture() -> int:
-    """The number of agents to deploy."""
-    return 1
-
-
 @pytest.mark.parametrize(
     "series",
     [
@@ -56,11 +51,11 @@ def num_agents_fixture() -> int:
 )
 @pytest_asyncio.fixture(scope="module", name="jenkins_agent_application")
 async def application_fixture(
-    model: Model, charm: str, num_agents: int, series: str
+    model: Model, charm: str, series: str
 ) -> typing.AsyncGenerator[Application, None]:
     """Build and deploy the charm."""
     # Deploy the charm and wait for blocked status
-    application = await model.deploy(charm, num_units=num_agents, series=series)
+    application = await model.deploy(charm, num_units=NUM_AGENT_UNITS, series=series)
     await model.wait_for_idle(apps=[application.name], status=ops.BlockedStatus.name)
 
     yield application

@@ -16,6 +16,7 @@ import ops.testing
 import charm_state
 from charm import JenkinsAgentCharm
 
+
 def raise_exception(exception: Exception):
     """Raise exception function for monkeypatching.
 
