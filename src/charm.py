@@ -62,23 +62,15 @@ class JenkinsAgentCharm(ops.CharmBase):
             relation_data = self.state.agent_meta.as_dict()
             agent_relation.data[self.unit].update(relation_data)
 
-    def _on_upgrade_charm(self, event: ops.UpgradeCharmEvent) -> None:
-        """Handle upgrade charm event.
+    def _on_upgrade_charm(self, _: ops.UpgradeCharmEvent) -> None:
+        """Handle upgrade charm event."""
+        self.restart_agent_service()
 
-        Args:
-            event: The event fired on upgrade charm.
-        """
-        self.restart_agent_service(event)
+    def _on_start(self, _: ops.EventBase) -> None:
+        """Handle on start event."""
+        self.restart_agent_service()
 
-    def _on_start(self, event: ops.EventBase) -> None:
-        """Handle on start event.
-
-        Args:
-            event: The event fired on upgrade charm.
-        """
-        self.restart_agent_service(event)
-
-    def restart_agent_service(self, _: ops.EventBase) -> None:
+    def restart_agent_service(self) -> None:
         """Restart the jenkins agent charm.
 
         Raises:
