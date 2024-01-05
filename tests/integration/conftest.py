@@ -126,7 +126,7 @@ async def server_unit_ip_fixture(jenkins_server_model: Model, jenkins_server: Ap
         raise StopIteration("Invalid unit status") from exc
 
 
-@pytest.fixture(scope="function", name="web_address")
+@pytest_asyncio.fixture(scope="function", name="web_address")
 async def web_address_fixture(server_unit_ip: str):
     """Get Jenkins machine server charm web address."""
     return f"http://{server_unit_ip}:8080"
