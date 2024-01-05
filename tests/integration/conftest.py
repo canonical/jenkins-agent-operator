@@ -6,6 +6,7 @@
 import logging
 import secrets
 import typing
+import ops
 
 import jenkinsapi.jenkins
 import pytest
@@ -19,8 +20,7 @@ from pytest_operator.plugin import OpsTest
 
 logger = logging.getLogger(__name__)
 
-BLOCKED_STATUS_NAME = "blocked"
-
+NUM_AGENT_UNITS = 1
 
 @pytest_asyncio.fixture(scope="module", name="charm")
 async def charm_fixture(request: pytest.FixtureRequest, ops_test: OpsTest) -> str:
@@ -47,14 +47,21 @@ def num_agents_fixture() -> int:
     return 1
 
 
+@pytest.mark.parametrize(
+    "series",
+    [
+        pytest.param("focal"),
+        pytest.param("jammy"),
+    ],
+)
 @pytest_asyncio.fixture(scope="module", name="jenkins_agent_application")
 async def application_fixture(
-    model: Model, charm: str, num_agents: int
+    model: Model, charm: str, num_agents: int, series: str
 ) -> typing.AsyncGenerator[Application, None]:
     """Build and deploy the charm."""
     # Deploy the charm and wait for blocked status
-    application = await model.deploy(charm, num_units=num_agents, series="focal")
-    await model.wait_for_idle(apps=[application.name], status=BLOCKED_STATUS_NAME)
+    application = await model.deploy(charm, num_units=num_agents, series=series)
+    await model.wait_for_idle(apps=[application.name], status=ops.BlockedStatus.name)
 
     yield application
 

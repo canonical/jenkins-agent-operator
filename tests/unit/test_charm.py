@@ -16,13 +16,6 @@ import ops.testing
 import charm_state
 from charm import JenkinsAgentCharm
 
-ACTIVE_STATUS_NAME = "active"
-BLOCKED_STATUS_NAME = "blocked"
-MAINTENANCE_STATUS_NAME = "maintenance"
-WAITING_STATUS_NAME = "waiting"
-ERROR_STATUS_NAME = "error"
-
-
 def raise_exception(exception: Exception):
     """Raise exception function for monkeypatching.
 
@@ -56,7 +49,7 @@ class TestCharm(unittest.TestCase):
         self.harness.begin()
 
         jenkins_charm: JenkinsAgentCharm = self.harness.charm
-        assert jenkins_charm.unit.status.name == BLOCKED_STATUS_NAME
+        assert jenkins_charm.unit.status.name == ops.BlockedStatus.name
         assert jenkins_charm.unit.status.message == "Invalid executor message"
 
     @patch("service.JenkinsAgentService.restart")
@@ -74,7 +67,7 @@ class TestCharm(unittest.TestCase):
         jenkins_charm._on_upgrade_charm(_upgrade_charm_event)
 
         assert jenkins_charm.unit.status.message == "Waiting for relation."
-        assert jenkins_charm.unit.status.name == BLOCKED_STATUS_NAME
+        assert jenkins_charm.unit.status.name == ops.BlockedStatus.name
 
     @patch("ops.ConfigChangedEvent")
     @patch("ops.Model.get_relation")
