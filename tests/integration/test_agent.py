@@ -8,11 +8,13 @@ import logging
 import jenkinsapi.jenkins
 from juju.application import Application
 from juju.model import Model
+
 from .conftest import NUM_AGENT_UNITS
 
 logger = logging.getLogger()
 
 MICROK8S_CONTROLLER = "controller"
+
 
 async def test_agent_relation(
     jenkins_server: Application,

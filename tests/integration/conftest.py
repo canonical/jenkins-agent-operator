@@ -6,9 +6,9 @@
 import logging
 import secrets
 import typing
-import ops
 
 import jenkinsapi.jenkins
+import ops
 import pytest
 import pytest_asyncio
 from juju.action import Action
