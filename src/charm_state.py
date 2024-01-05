@@ -115,22 +115,6 @@ def _get_credentials_from_agent_relation(
     return Credentials(address=address, secret=secret)
 
 
-def get_agent_interface_dict_from_metadata(agent_meta: AgentMeta) -> dict:
-    """Generate dictionary representation of agent metadata.
-
-    Args:
-        agent_meta: The agent metadata object.
-
-    Returns:
-        A dictionary adhering to jenkins_agent_v0 interface.
-    """
-    return {
-        "executors": str(agent_meta.executors),
-        "labels": agent_meta.labels,
-        "name": agent_meta.name,
-    }
-
-
 @dataclass
 class State:
     """The Jenkins agent state.
