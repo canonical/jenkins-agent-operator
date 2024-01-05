@@ -117,7 +117,7 @@ class JenkinsAgentService:
             apt.update()
             apt.add_package("openjdk-17-jre")
             apt.add_package(AGENT_PACKAGE_NAME)
-        except (apt.PackageError, apt.PackageNotFoundError) as exc:
+        except (apt.PackageError, apt.PackageNotFoundError, apt.GPGKeyError) as exc:
             raise PackageInstallError("Error installing the agent package") from exc
 
     def restart(self) -> None:
