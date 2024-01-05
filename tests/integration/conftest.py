@@ -6,6 +6,7 @@
 import logging
 import secrets
 import typing
+import textwrap
 
 import jenkinsapi.jenkins
 import ops
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 NUM_AGENT_UNITS = 1
 
 
-@pytest_asyncio.fixture(scope="module", name="charm")
+@pytest_asyncio.fixture(scope="function", name="charm")
 async def charm_fixture(request: pytest.FixtureRequest, ops_test: OpsTest) -> str:
     """The path to charm."""
     charm = request.config.getoption("--charm-file")
@@ -35,20 +36,27 @@ async def charm_fixture(request: pytest.FixtureRequest, ops_test: OpsTest) -> st
     return charm
 
 
-@pytest.fixture(scope="module", name="model")
+@pytest.fixture(scope="function", name="model")
 def model_fixture(ops_test: OpsTest) -> Model:
     """The testing model."""
     assert ops_test.model
     return ops_test.model
 
 
-@pytest_asyncio.fixture(scope="module", name="jenkins_agent_application", params=["focal", "jammy"])
+@pytest_asyncio.fixture(
+    scope="function", name="jenkins_agent_application", params=["focal", "jammy"]
+)
 async def application_fixture(
-    model: Model, charm: str, request
+    model: Model, charm: str, request: typing.Any
 ) -> typing.AsyncGenerator[Application, None]:
     """Build and deploy the charm."""
     # Deploy the charm and wait for blocked status
-    application = await model.deploy(charm, num_units=NUM_AGENT_UNITS, series=request.param)
+    application = await model.deploy(
+        charm,
+        num_units=NUM_AGENT_UNITS,
+        series=request.param,
+        config={"jenkins_agent_labels": "machine"}
+    )
     await model.wait_for_idle(apps=[application.name], status=ops.BlockedStatus.name)
 
     yield application
@@ -56,7 +64,7 @@ async def application_fixture(
     await model.remove_application(application.name, block_until_done=True, force=True)
 
 
-@pytest_asyncio.fixture(scope="module", name="k8s_controller")
+@pytest_asyncio.fixture(scope="function", name="k8s_controller")
 async def jenkins_server_k8s_controller_fixture() -> typing.AsyncGenerator[Controller, None]:
     """The juju controller on microk8s.
     The controller is bootstrapped in "pre_run_script.sh".
@@ -71,7 +79,7 @@ async def jenkins_server_k8s_controller_fixture() -> typing.AsyncGenerator[Contr
     await controller.disconnect()
 
 
-@pytest_asyncio.fixture(scope="module", name="jenkins_server_model")
+@pytest_asyncio.fixture(scope="function", name="jenkins_server_model")
 async def jenkins_server_model_fixture(
     k8s_controller: Controller,
 ) -> typing.AsyncGenerator[Model, None]:
@@ -86,9 +94,10 @@ async def jenkins_server_model_fixture(
     await k8s_controller.destroy_models(
         model.name, destroy_storage=True, force=True, max_wait=10 * 60
     )
+    await model.disconnect()
 
 
-@pytest_asyncio.fixture(scope="module", name="jenkins_server")
+@pytest_asyncio.fixture(scope="function", name="jenkins_server")
 async def jenkins_server_fixture(jenkins_server_model: Model) -> Application:
     """The jenkins machine server."""
     jenkins = await jenkins_server_model.deploy("jenkins-k8s")
@@ -103,7 +112,7 @@ async def jenkins_server_fixture(jenkins_server_model: Model) -> Application:
     return jenkins
 
 
-@pytest_asyncio.fixture(scope="module", name="server_unit_ip")
+@pytest_asyncio.fixture(scope="function", name="server_unit_ip")
 async def server_unit_ip_fixture(jenkins_server_model: Model, jenkins_server: Application):
     """Get Jenkins machine server charm unit IP."""
     status: FullStatus = await jenkins_server_model.get_status([jenkins_server.name])
@@ -117,13 +126,13 @@ async def server_unit_ip_fixture(jenkins_server_model: Model, jenkins_server: Ap
         raise StopIteration("Invalid unit status") from exc
 
 
-@pytest_asyncio.fixture(scope="module", name="web_address")
+@pytest_asyncio.fixture(scope="function", name="web_address")
 async def web_address_fixture(server_unit_ip: str):
     """Get Jenkins machine server charm web address."""
     return f"http://{server_unit_ip}:8080"
 
 
-@pytest_asyncio.fixture(scope="module", name="jenkins_client")
+@pytest_asyncio.fixture(scope="function", name="jenkins_client")
 async def jenkins_client_fixture(
     jenkins_server: Application,
     web_address: str,
@@ -140,3 +149,62 @@ async def jenkins_client_fixture(
     return jenkinsapi.jenkins.Jenkins(
         baseurl=web_address, username="admin", password=password, timeout=60
     )
+
+
+def gen_test_job_xml(node_label: str):
+    """Generate a job xml with target node label.
+
+    Args:
+        node_label: The node label to assign to job to.
+
+    Returns:
+        The job XML.
+    """
+    return textwrap.dedent(
+        f"""
+        <project>
+            <actions/>
+            <description/>
+            <keepDependencies>false</keepDependencies>
+            <properties/>
+            <scm class="hudson.scm.NullSCM"/>
+            <assignedNode>{node_label}</assignedNode>
+            <canRoam>false</canRoam>
+            <disabled>false</disabled>
+            <blockBuildWhenDownstreamBuilding>false</blockBuildWhenDownstreamBuilding>
+            <blockBuildWhenUpstreamBuilding>false</blockBuildWhenUpstreamBuilding>
+            <triggers/>
+            <concurrentBuild>false</concurrentBuild>
+            <builders>
+                <hudson.tasks.Shell>
+                    <command>echo "hello world"</command>
+                    <configuredLocalRules/>
+                </hudson.tasks.Shell>
+            </builders>
+            <publishers/>
+            <buildWrappers/>
+        </project>
+        """
+    )
+
+
+def assert_job_success(
+    client: jenkinsapi.jenkins.Jenkins, agent_name: str, test_target_label: str
+):
+    """Assert that a job can be created and ran successfully.
+
+    Args:
+        client: The Jenkins API client.
+        agent_name: The registered Jenkins agent node to check.
+        test_target_label: The Jenkins agent node label.
+    """
+    nodes = client.get_nodes()
+    assert any(
+        (agent_name in key for key in nodes.keys())
+    ), f"Jenkins {agent_name} node not registered."
+
+    job = client.create_job(agent_name, gen_test_job_xml(test_target_label))
+    queue_item = job.invoke()
+    queue_item.block_until_complete()
+    build: jenkinsapi.build.Build = queue_item.get_build()
+    assert build.get_status() == "SUCCESS"

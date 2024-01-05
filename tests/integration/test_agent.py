@@ -4,16 +4,30 @@
 """Integration tests for jenkins-agent-k8s-operator charm."""
 
 import logging
+import string
+import secrets
 
 import jenkinsapi.jenkins
 from juju.application import Application
 from juju.model import Model
 
-from .conftest import NUM_AGENT_UNITS
+from .conftest import NUM_AGENT_UNITS, assert_job_success
 
 logger = logging.getLogger()
 
 MICROK8S_CONTROLLER = "controller"
+
+
+def rand_ascii(length: int) -> str:
+    """Generate random string containing only ascii characters.
+
+    Args:
+        length: length of the generated string.
+
+    Returns:
+        Randomly generated ascii string of length {length}.
+    """
+    return ''.join(secrets.choice(string.ascii_lowercase) for _ in range(length))
 
 
 async def test_agent_relation(
@@ -26,7 +40,7 @@ async def test_agent_relation(
     act: when the offer is created and relation is setup through the offer.
     assert: the relation succeeds and agents become active.
     """
-    agent_cmi_name: str = "cmi-agent"
+    agent_cmi_name: str = f"cmi-agent-{rand_ascii(4)}"
     jenkins_server_model: Model = jenkins_server.model
     logger.info("Creating offer %s:%s", jenkins_server.name, agent_cmi_name)
     await jenkins_server_model.create_offer(f"{jenkins_server.name}:agent", agent_cmi_name)
@@ -47,3 +61,5 @@ async def test_agent_relation(
     assert all(node.is_online() for node in nodes.values())
     # One of the nodes is the server node.
     assert len(nodes.values()) == NUM_AGENT_UNITS + 1
+
+    assert_job_success(jenkins_client, jenkins_agent_application.name, "machine")

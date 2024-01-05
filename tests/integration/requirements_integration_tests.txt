@@ -1,5 +1,5 @@
 jenkinsapi>=0.3,<1
-juju==3.0.4
+juju==3.2.3.0
 ops
 pytest
 pytest-asyncio
