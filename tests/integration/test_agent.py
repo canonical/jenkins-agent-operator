@@ -4,8 +4,8 @@
 """Integration tests for jenkins-agent-k8s-operator charm."""
 
 import logging
-import string
 import secrets
+import string
 
 import jenkinsapi.jenkins
 from juju.application import Application
@@ -27,7 +27,7 @@ def rand_ascii(length: int) -> str:
     Returns:
         Randomly generated ascii string of length {length}.
     """
-    return ''.join(secrets.choice(string.ascii_lowercase) for _ in range(length))
+    return "".join(secrets.choice(string.ascii_lowercase) for _ in range(length))
 
 
 async def test_agent_relation(

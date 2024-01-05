@@ -5,8 +5,8 @@
 
 import logging
 import secrets
-import typing
 import textwrap
+import typing
 
 import jenkinsapi.jenkins
 import ops
@@ -55,7 +55,7 @@ async def application_fixture(
         charm,
         num_units=NUM_AGENT_UNITS,
         series=request.param,
-        config={"jenkins_agent_labels": "machine"}
+        config={"jenkins_agent_labels": "machine"},
     )
     await model.wait_for_idle(apps=[application.name], status=ops.BlockedStatus.name)
 
