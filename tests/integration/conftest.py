@@ -42,20 +42,13 @@ def model_fixture(ops_test: OpsTest) -> Model:
     return ops_test.model
 
 
-@pytest.mark.parametrize(
-    "series",
-    [
-        pytest.param("focal"),
-        pytest.param("jammy"),
-    ],
-)
-@pytest_asyncio.fixture(scope="module", name="jenkins_agent_application")
+@pytest_asyncio.fixture(scope="module", name="jenkins_agent_application", params=["focal", "jammy"])
 async def application_fixture(
-    model: Model, charm: str, series: str
+    model: Model, charm: str, request
 ) -> typing.AsyncGenerator[Application, None]:
     """Build and deploy the charm."""
     # Deploy the charm and wait for blocked status
-    application = await model.deploy(charm, num_units=NUM_AGENT_UNITS, series=series)
+    application = await model.deploy(charm, num_units=NUM_AGENT_UNITS, series=request.param)
     await model.wait_for_idle(apps=[application.name], status=ops.BlockedStatus.name)
 
     yield application
