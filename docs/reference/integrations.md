@@ -8,7 +8,7 @@ _Supported charms_: [jenkins-k8s](https://charmhub.io/jenkins-agent-k8s),
 Jenkins agents provide a way to perform tasks scheduled by the Jenkins server. Jenkins agents are
 used to distribute workload across multiple containers, allowing parallel execution of jobs.
 
-To create a [cross model relation](https://juju.is/docs/olm/manage-cross-model-integrations) with
+To create a [cross model integration](https://juju.is/docs/olm/manage-cross-model-integrations) with
 a jenkins-agent (VM) charm, create an offer from the machine model.
 
 `juju offer jenkins-agent:agent`
