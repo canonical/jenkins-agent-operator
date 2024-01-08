@@ -14,10 +14,10 @@ The Jenkins-agent Operator is a member of the Ubuntu family. It's an open source
 
 - [Code of conduct](https://ubuntu.com/community/code-of-conduct)
 - [Get support](https://discourse.charmhub.io/)
-- [Join our online chat](https://chat.charmhub.io/charmhub/channels/charm-dev)
+- [Join our online chat](https://app.element.io/#/room/#charmhub-charmdev:ubuntu.com)
 - [Contribute](Contribute)
 
-Thinking about using the Jenkins-k8s Operator for your next project? [Get in touch](https://chat.charmhub.io/charmhub/channels/charm-dev)!
+Thinking about using the Jenkins-k8s Operator for your next project? [Get in touch](https://app.element.io/#/room/#charmhub-charmdev:ubuntu.com)!
 
 # Contents
 
