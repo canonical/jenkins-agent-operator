@@ -57,14 +57,14 @@ juju deploy jenkins-k8s --channel=latest/edge
 
 The Jenkins application can only have a single server unit. Adding more units through --num-units parameter will cause the application to misbehave.
 
-#### Create an offer for Cross Model Relation
+#### Create an offer for Cross Model Integration
 
 To integrate charms
 [across different models](https://juju.is/docs/juju/manage-cross-model-integrations), a juju
 [`offer`](https://juju.is/docs/juju/manage-cross-model-integrations#heading--create-an-offer) is
 required.
 
-Create an offer of the `jenkins-k8s` charm's `agent` relation.
+Create an offer of the `jenkins-k8s` charm's `agent` integration.
 
 ```
 juju offer jenkins-k8s:agent
