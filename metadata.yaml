@@ -1,4 +1,4 @@
-# Copyright 2023 Canonical Ltd.
+# Copyright 2024 Canonical Ltd.
 # See LICENSE file for licensing details.
 # This file populates the Overview on Charmhub.
 # See https://juju.is/docs/sdk/metadata-reference for a checklist and guidance.
@@ -14,7 +14,7 @@ display-name: Charm Template
 
 # (Required)
 summary: A very short one-line summary of the charm.
-docs: https://discourse.charmhub.io
+docs: https://discourse.charmhub.io/t/jenkins-agent-documentation-overview/12694
 issues: https://github.com/canonical/is-charms-template-repo/issues
 maintainers: 
   - https://launchpad.net/~canonical-is-devops
