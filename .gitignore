@@ -10,3 +10,8 @@ __pycache__/
 .mypy_cache
 *.egg-info/
 */*.rock
+*/*.snap
+# charmcraft-related directories
+prime/
+parts/
+stage/

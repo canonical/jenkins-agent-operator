@@ -1,0 +1,6 @@
+jenkinsapi>=0.3,<1
+juju==3.0.4
+ops
+pytest
+pytest-asyncio
+pytest-operator

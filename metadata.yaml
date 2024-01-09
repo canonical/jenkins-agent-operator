@@ -1,50 +1,35 @@
 # Copyright 2024 Canonical Ltd.
 # See LICENSE file for licensing details.
-# This file populates the Overview on Charmhub.
-# See https://juju.is/docs/sdk/metadata-reference for a checklist and guidance.
-
-# The charm package name, no spaces (required)
-# See https://juju.is/docs/sdk/naming#heading--naming-charms for guidance.
-name: is-charms-template
- 
-# The following metadata are human-readable and will be published prominently on Charmhub.
-
-# (Recommended)
-display-name: Charm Template
-
-# (Required)
-summary: A very short one-line summary of the charm.
-docs: https://discourse.charmhub.io/t/jenkins-agent-documentation-overview/12694
-issues: https://github.com/canonical/is-charms-template-repo/issues
-maintainers: 
+name: jenkins-agent
+display-name: Jenkins agent
+maintainers:
   - https://launchpad.net/~canonical-is-devops
-source: https://github.com/canonical/is-charms-template-repo
-
+summary: Jenkins agent machine charm
+issues: https://github.com/canonical/jenkins-agent-operator/issues
+source: https://github.com/canonical/jenkins-agent-operator
+docs: https://discourse.charmhub.io/t/jenkins-agent-documentation-overview/12694
 description: |
-  A single sentence that says what the charm is, concisely and memorably.
+  A [Juju](https://juju.is/) [charm](https://juju.is/docs/olm/charmed-operators)
+  deploying and managing [Jenkins](https://www.jenkins.io/) Agent on machines and
+  configurable to use a Jenkins charm deployed in another Juju model.
 
-  A paragraph of one to three short sentences, that describe what the charm does.
+  This charm simplifies initial deployment and "day N" operations of Jenkins Agent
+  on VMs and bare metal.
 
-  A third paragraph that explains what need the charm meets.
+  As such, the charm makes it easy for those looking to take control of their own
+  Agents whilst keeping operations simple, and gives them the freedom to deploy on
+  the platform of their choice.
 
-  Finally, a paragraph that describes whom the charm is useful for.
-
-# The containers and resources metadata apply to Kubernetes charms only.
-# Remove them if not required.
-
-# Your workload’s containers.
-containers:
-  httpbin:
-    resource: httpbin-image
-
-# This field populates the Resources tab on Charmhub.
-resources:
-  # An OCI image resource for each container listed above.
-  # You may remove this if your charm will run without a workload sidecar container.
-  httpbin-image:
-    type: oci-image
-    description: OCI image for httpbin
-    # The upstream-source field is ignored by Juju. It is included here as a reference
-    # so the integration testing suite knows which image to deploy during testing. This field
-    # is also used by the 'canonical/charming-actions' Github action for automated releasing.
-    upstream-source: kennethreitz/httpbin
+  For DevOps or SRE teams this charm will make operating Jenkins Agent simple and
+  straightforward through Juju's clean interface. It will allow easy deployment
+  into multiple environments for testing changes, and supports scaling out for
+  enterprise deployments.
+tags:
+  - application_development
+  - ops
+series:
+  - focal
+  - jammy
+provides:
+  agent:
+    interface: jenkins_agent_v0

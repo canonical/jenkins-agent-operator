@@ -1,0 +1,4 @@
+[Service]
+{%- for key, value in environments.items() %}
+Environment="{{key}}={{value}}"
+{%- endfor -%}
