@@ -1,26 +1,20 @@
-<!--
-Avoid using this README file for information that is maintained or published elsewhere, e.g.:
+# Jenkins-k8s Operator
 
-* metadata.yaml > published on Charmhub
-* documentation > published on (or linked to from) Charmhub
-* detailed contribution guide > documentation or CONTRIBUTING.md
+A [Juju](https://juju.is/) [charm](https://juju.is/docs/olm/charmed-operators) deploying and managing [Jenkins](https://www.jenkins.io/) Agent on machines and configurable to use a Jenkins charm deployed in another Juju model.
 
-Use links instead.
--->
+This charm simplifies initial deployment and "day N" operations of Jenkins Agent on VMs and bare metal.
 
-# is-charms-template
+As such, the charm makes it easy for those looking to take control of their own agents whilst keeping operations simple, and gives them the freedom to deploy on the platform of their choice.
 
-Charmhub package name: operator-template
-More information: https://charmhub.io/is-charms-template
+For DevOps or SRE teams this charm will make operating Jenkins Agent simple and straightforward through Juju's clean interface. It will allow easy deployment into multiple environments for testing changes, and supports scaling out for enterprise deployments.
 
-Describe your charm in one or two sentences.
+## Project and community
 
-## Other resources
+The Jenkins-agent Operator is a member of the Ubuntu family. It's an open source project that warmly welcomes community projects, contributions, suggestions, fixes and constructive feedback.
 
-<!-- If your charm is documented somewhere else other than Charmhub, provide a link separately. -->
+- [Code of conduct](https://ubuntu.com/community/code-of-conduct)
+- [Get support](https://discourse.charmhub.io/)
+- [Join our online chat](https://app.element.io/#/room/#charmhub-charmdev:ubuntu.com)
+- [Contribute](Contribute)
 
-- [Read more](https://example.com)
-
-- [Contributing](CONTRIBUTING.md) <!-- or link to other contribution documentation -->
-
-- See the [Juju SDK documentation](https://juju.is/docs/sdk) for more information about developing and improving charms.
+Thinking about using the Jenkins-k8s Operator for your next project? [Get in touch](https://app.element.io/#/room/#charmhub-charmdev:ubuntu.com)!
