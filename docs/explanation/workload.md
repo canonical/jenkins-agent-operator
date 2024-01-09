@@ -5,7 +5,7 @@ The core jenkins agent workload requires 3 main parameters (JENKINS_URL, JENKINS
 2. Run the agent binary with the following parameters to register the node with Jenkins
 ```
 /usr/bin/java -jar agent.jar \\
--jnlpUrl "${JENKINS_URL}/computer/${JENKINS_AGENT}/slave-agent.jnlp" \\
+-jnlpUrl "<jnlp-path-on-jenkins-server>" \\
 -workDir "${JENKINS_WORKDIR}" \\
 -noReconnect \\
 -secret "${JENKINS_SECRET}"

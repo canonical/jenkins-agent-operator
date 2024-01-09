@@ -32,7 +32,7 @@ of the jenkins-agent charm.
 
 ```
 # Deploy an edge version of the charm until stable version is released.
-juju deploy jenkins-agent
+juju deploy jenkins-agent --channel=latest/edge
 ```
 
 ### Deploy and integrate with the jenkins-k8s charm
