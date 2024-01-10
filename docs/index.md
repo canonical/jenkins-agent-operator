@@ -22,11 +22,12 @@ Thinking about using the Jenkins-k8s Operator for your next project? [Get in tou
 # Contents
 
 1. [Tutorial](tutorial)
-   1. [Getting Started](tutorial/getting-started.md)
+  1. [Getting Started](tutorial/getting-started.md)
 1. [How to](how-to)
-   1. [Configure agent node label](how-to/configure-agent-node-label.md)
+  1. [Configure agent node label](how-to/configure-agent-node-label.md)
 1. [Reference](reference)
-   1. [Actions](reference/actions.md)
-   1. [Configurations](reference/configurations.md)
-   1. [Integrations](reference/integrations.md)
+  1. [Actions](reference/actions.md)
+  1. [Configurations](reference/configurations.md)
+  1. [Integrations](reference/integrations.md)
 1. [Explanation](explanation)
+  1. [Managing workload inside the charm](explanation/workload.md)
