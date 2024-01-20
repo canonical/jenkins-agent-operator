@@ -17,18 +17,6 @@ import service
 from charm import JenkinsAgentCharm
 
 
-def raise_exception(exception: Exception):
-    """Raise exception function for monkeypatching.
-
-    Args:
-        exception: The exception to raise.
-
-    Raises:
-        exception: .
-    """
-    raise exception
-
-
 def test___init___invalid_state(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch):
     """
     arrange: patched State.from_charm that raises an InvalidState Error.
@@ -43,9 +31,9 @@ def test___init___invalid_state(harness: ops.testing.Harness, monkeypatch: pytes
 
     harness.begin()
 
-    jenkins_charm: JenkinsAgentCharm = harness.charm
-    assert jenkins_charm.unit.status.name == ops.BlockedStatus.name
-    assert jenkins_charm.unit.status.message == "Invalid executor message"
+    charm: JenkinsAgentCharm = harness.charm
+    assert charm.unit.status.name == ops.BlockedStatus.name
+    assert charm.unit.status.message == "Invalid executor message"
 
 
 def test__on_upgrade_charm(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch):
@@ -58,12 +46,12 @@ def test__on_upgrade_charm(harness: ops.testing.Harness, monkeypatch: pytest.Mon
     monkeypatch.setattr(service.JenkinsAgentService, "restart", MagicMock())
     harness.begin()
 
-    jenkins_charm: JenkinsAgentCharm = harness.charm
+    charm: JenkinsAgentCharm = harness.charm
     upgrade_charm_event = MagicMock(spec=ops.UpgradeCharmEvent)
-    jenkins_charm._on_upgrade_charm(upgrade_charm_event)
+    charm._on_upgrade_charm(upgrade_charm_event)
 
-    assert jenkins_charm.unit.status.message == "Waiting for relation."
-    assert jenkins_charm.unit.status.name == ops.BlockedStatus.name
+    assert charm.unit.status.message == "Waiting for relation."
+    assert charm.unit.status.name == ops.BlockedStatus.name
 
 
 def test__on_config_changed(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch):
@@ -77,8 +65,71 @@ def test__on_config_changed(harness: ops.testing.Harness, monkeypatch: pytest.Mo
     get_relation_mock = MagicMock()
     monkeypatch.setattr(ops.Model, "get_relation", get_relation_mock)
 
-    jenkins_charm: JenkinsAgentCharm = harness.charm
-    jenkins_charm._on_config_changed(config_changed_event)
+    charm: JenkinsAgentCharm = harness.charm
+    charm._on_config_changed(config_changed_event)
 
     agent_relation = get_relation_mock.return_value
     assert agent_relation.data[harness._unit_name].update.call_count == 1
+
+
+def test_restart_agent_service(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch):
+    """
+    arrange: given a charm with patched relation.
+    act: when _on_config_changed is called.
+    assert: The charm correctly updates the relation databag.
+    """
+    get_relation_mock = MagicMock()
+    monkeypatch.setattr(ops.Model, "get_relation", get_relation_mock)
+    get_credentials_mock = MagicMock()
+    restart_mock = MagicMock()
+    monkeypatch.setattr(service.JenkinsAgentService, "restart", restart_mock)
+
+    harness.begin()
+
+    charm: JenkinsAgentCharm = harness.charm
+    monkeypatch.setattr(charm.state, "agent_relation_credentials", get_credentials_mock)
+    charm.restart_agent_service()
+
+    assert restart_mock.call_count == 1
+    assert charm.unit.status.name == ops.ActiveStatus.name
+
+
+def test_restart_agent_service_incomplete_relation_data(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
+):
+    """
+    arrange: given a charm with patched relation.
+    act: when _on_config_changed is called.
+    assert: The charm correctly updates the relation databag.
+    """
+    get_relation_mock = MagicMock()
+    monkeypatch.setattr(ops.Model, "get_relation", get_relation_mock)
+    harness.begin()
+
+    charm: JenkinsAgentCharm = harness.charm
+    monkeypatch.setattr(charm.state, "agent_relation_credentials", None)
+    charm.restart_agent_service()
+
+    assert charm.unit.status.name == ops.WaitingStatus.name
+
+
+def test_restart_agent_service_service_restart_error(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
+):
+    """
+    arrange: given a charm with patched relation.
+    act: when _on_config_changed is called.
+    assert: The charm correctly updates the relation databag.
+    """
+    get_relation_mock = MagicMock()
+    monkeypatch.setattr(ops.Model, "get_relation", get_relation_mock)
+    get_credentials_mock = MagicMock()
+    restart_mock = MagicMock(side_effect=service.ServiceRestartError)
+    monkeypatch.setattr(service.JenkinsAgentService, "restart", restart_mock)
+
+    harness.begin()
+
+    charm: JenkinsAgentCharm = harness.charm
+    monkeypatch.setattr(charm.state, "agent_relation_credentials", get_credentials_mock)
+    with pytest.raises(RuntimeError, match="Error restarting the agent service"):
+        charm.restart_agent_service()
