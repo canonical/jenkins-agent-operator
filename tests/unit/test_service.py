@@ -87,7 +87,8 @@ def test_restart_service(harness: ops.testing.Harness, monkeypatch: pytest.Monke
     monkeypatch.setattr(os, "chown", MagicMock)
     monkeypatch.setattr(systemd, "daemon_reload", MagicMock)
     monkeypatch.setattr(systemd, "service_restart", MagicMock)
-    monkeypatch.setattr(service.JenkinsAgentService, "is_active", MagicMock)
+    monkeypatch.setattr(systemd, "service_running", MagicMock(return_value=True))
+    monkeypatch.setattr(os.path, "exists", MagicMock(return_value=True))
 
     harness.add_relation("agent", "jenkins-k8s", unit_data=agent_relation_data)
     harness.begin()
