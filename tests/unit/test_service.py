@@ -82,6 +82,7 @@ def test_restart_service(harness: ops.testing.Harness, monkeypatch: pytest.Monke
     """
     pathlib_write_text_mock = MagicMock()
     monkeypatch.setattr(Path, "write_text", pathlib_write_text_mock)
+    monkeypatch.setattr(Path, "mkdir", MagicMock)
     monkeypatch.setattr(os, "chmod", MagicMock)
     monkeypatch.setattr(os, "chown", MagicMock)
     monkeypatch.setattr(systemd, "daemon_reload", MagicMock)
@@ -104,6 +105,7 @@ def test_restart_service_write_config_type_error(
     assert: The charm should be in an error state.
     """
     monkeypatch.setattr(Path, "write_text", MagicMock(side_effect=TypeError))
+    monkeypatch.setattr(Path, "mkdir", MagicMock)
     harness.add_relation("agent", "jenkins-k8s", unit_data=agent_relation_data)
     harness.begin()
     charm: JenkinsAgentCharm = harness.charm
@@ -124,6 +126,7 @@ def test_restart_service_systemd_error(
     """
     systemd_error_message = "Mock systemd error"
     monkeypatch.setattr(service.JenkinsAgentService, "_render_file", MagicMock)
+    monkeypatch.setattr(Path, "mkdir", MagicMock)
     monkeypatch.setattr(
         systemd,
         "daemon_reload",
