@@ -53,11 +53,11 @@ def test_install_apt_package_gpg_key_error(
         charm._on_install(MagicMock(spec=ops.InstallEvent))
 
 
-def test_on_install_add_ppa(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch):
+def test_on_install(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch):
     """
     arrange: Harness with mocked apt module.
-    act: run _on_install hook with methods raising different errors.
-    assert: The charm should be in an error state.
+    act: run initial hook.
+    assert: The installation should pass without error and charm in blocked state.
     """
     apt_repository_mapping_mock = MagicMock()
     apt_import_key_mock = MagicMock()
@@ -72,13 +72,15 @@ def test_on_install_add_ppa(harness: ops.testing.Harness, monkeypatch: pytest.Mo
 
     harness.begin_with_initial_hooks()
     assert apt_add_package_mock.call_count == 2
+    assert harness.charm.unit.status.name == ops.BlockedStatus.name
 
 
 def test_restart_service(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch):
     """
-    arrange: Harness with mocked apt module.
-    act: run _on_install hook with methods raising different errors.
-    assert: The charm should be in an error state.
+    arrange: Harness with mocked systemd and fs-related methods.
+    act: add relation with jenkins-k8s with dummy relation data and restart the agent service.
+    assert: Configuration file content should match the relation data and
+    restart should not raise any error and the charm should be in active state.
     """
     pathlib_write_text_mock = MagicMock()
     monkeypatch.setattr(Path, "write_text", pathlib_write_text_mock)
@@ -93,17 +95,19 @@ def test_restart_service(harness: ops.testing.Harness, monkeypatch: pytest.Monke
     harness.add_relation("agent", "jenkins-k8s", unit_data=agent_relation_data)
     harness.begin()
     charm: JenkinsAgentCharm = harness.charm
-    charm.jenkins_agent_service.restart()
+    start_event_mock = MagicMock(spec=ops.StartEvent)
+    charm._on_start(start_event_mock)
     assert pathlib_write_text_mock.call_args[0][0] == service_config_template
+    assert charm.unit.status.name == ops.ActiveStatus.name
 
 
 def test_restart_service_write_config_type_error(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
 ):
     """
-    arrange: Harness with mocked apt module.
-    act: run _on_install hook with methods raising different errors.
-    assert: The charm should be in an error state.
+    arrange: Harness with mocked fs-related methods raising an error.
+    act: restart the agent service.
+    assert: The charm should raise ServiceRestartError.
     """
     monkeypatch.setattr(Path, "write_text", MagicMock(side_effect=TypeError))
     monkeypatch.setattr(Path, "mkdir", MagicMock)
@@ -121,9 +125,9 @@ def test_restart_service_systemd_error(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
 ):
     """
-    arrange: Harness with mocked apt module.
-    act: run _on_install hook with methods raising different errors.
-    assert: The charm should be in an error state.
+    arrange: Harness with mocked systemd methods raising an error.
+    act: restart the agent service.
+    assert: The charm should raise ServiceRestartError.
     """
     systemd_error_message = "Mock systemd error"
     monkeypatch.setattr(service.JenkinsAgentService, "_render_file", MagicMock)
@@ -148,9 +152,9 @@ def test_service_is_active_systemd_error(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
 ):
     """
-    arrange: Harness with mocked apt module.
-    act: run _on_install hook with methods raising different errors.
-    assert: The charm should be in an error state.
+    arrange: Harness with mocked fs-related methods raising an error.
+    act: Check if the service is running.
+    assert: The call should return false and not raising any exceptions.
     """
     harness.begin()
     monkeypatch.setattr(systemd, "service_running", MagicMock(side_effect=SystemError))

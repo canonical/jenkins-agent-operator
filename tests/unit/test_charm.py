@@ -98,9 +98,9 @@ def test_restart_agent_service_incomplete_relation_data(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
 ):
     """
-    arrange: given a charm with patched relation.
-    act: when _on_config_changed is called.
-    assert: The charm correctly updates the relation databag.
+    arrange: given a charm with patched relation and incomplete relation data.
+    act: when restart_agent_service is called.
+    assert: The charm skips service restart and waits for complete relation data.
     """
     get_relation_mock = MagicMock()
     monkeypatch.setattr(ops.Model, "get_relation", get_relation_mock)
@@ -117,9 +117,9 @@ def test_restart_agent_service_service_restart_error(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
 ):
     """
-    arrange: given a charm with patched relation.
-    act: when _on_config_changed is called.
-    assert: The charm correctly updates the relation databag.
+    arrange: given a charm with patched relation and complete relation data.
+    act: when restart_agent_service is called, raising an error.
+    assert: The charm goes into error state with the correct error message.
     """
     get_relation_mock = MagicMock()
     monkeypatch.setattr(ops.Model, "get_relation", get_relation_mock)

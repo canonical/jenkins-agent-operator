@@ -21,9 +21,9 @@ def test_from_charm_invalid_metadata(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
 ):
     """
-    arrange: patched State.from_charm that raises an InvalidState Error.
-    act: when the JenkinsAgentCharm is initialized.
-    assert: The agent falls into BlockedStatus.
+    arrange: patched os.cpu_count method returning invalid number of executors.
+    act: when the charm is initialized.
+    assert: The charm goes into Error state.
     """
     monkeypatch.setattr(os, "cpu_count", MagicMock(return_value=0))
     harness.begin()

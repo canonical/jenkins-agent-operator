@@ -21,9 +21,9 @@ agent_relation_data = {"url": "http://example.com", "jenkins-agent-0_secret": se
 
 def test_agent_relation_joined(harness: ops.testing.Harness):
     """
-    arrange: patched State.from_charm that raises an InvalidState Error.
-    act: when the JenkinsAgentCharm is initialized.
-    assert: The agent falls into BlockedStatus.
+    arrange: initialized jenkins-agent charm.
+    act: add relation to the jenkins-k8s charm.
+    assert: The agent set the correct information in the unit's relation databag.
     """
     harness.begin()
     relation_id = harness.add_relation("agent", "jenkins-k8s", unit_data=agent_relation_data)
@@ -38,9 +38,9 @@ def test_agent_relation_changed_service_restart(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
 ):
     """
-    arrange: patched State.from_charm that raises an InvalidState Error.
-    act: when the JenkinsAgentCharm is initialized.
-    assert: The agent falls into BlockedStatus.
+    arrange: initialized jenkins-agent charm related to jenkins-k8s charm with relation data.
+    act: Trigger _on_agent_relation_changed hook.
+    assert: The charm should be in active state.
     """
     _ = harness.add_relation("agent", "jenkins-k8s", unit_data=agent_relation_data)
     harness.begin()
@@ -61,9 +61,9 @@ def test_agent_relation_changed_service_restart_error(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
 ):
     """
-    arrange: patched State.from_charm that raises an InvalidState Error.
-    act: when the JenkinsAgentCharm is initialized.
-    assert: The agent falls into BlockedStatus.
+    arrange: initialized jenkins-agent charm related to jenkins-k8s charm with relation data.
+    act: Trigger _on_agent_relation_changed hook with restart throwing an exception.
+    assert: The charm should be in error state with the correct error message.
     """
     _ = harness.add_relation("agent", "jenkins-k8s", unit_data=agent_relation_data)
     harness.begin()
@@ -86,9 +86,9 @@ def test_agent_relation_changed_service_already_active(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
 ):
     """
-    arrange: patched State.from_charm that raises an InvalidState Error.
-    act: when the JenkinsAgentCharm is initialized.
-    assert: The agent falls into BlockedStatus.
+    arrange: initialized jenkins-agent charm related to jenkins-k8s charm with relation data.
+    act: Trigger _on_agent_relation_changed hook when the service is already up.
+    assert: The charm skips restarting the agent service.
     """
     service_restart_mock = MagicMock()
     service_is_active_mock = PropertyMock(return_value=True)
@@ -107,9 +107,9 @@ def test_agent_relation_departed_service_stop_error(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
 ):
     """
-    arrange: patched State.from_charm that raises an InvalidState Error.
-    act: when the JenkinsAgentCharm is initialized.
-    assert: The agent falls into BlockedStatus.
+    arrange: initialized jenkins-agent charm related to jenkins-k8s charm with relation data.
+    act: remove the relation, raising an error when stopping the agent service.
+    assert: The charm falls into BlockedStatus with the correct message.
     """
     monkeypatch.setattr(systemd, "service_stop", MagicMock(side_effect=systemd.SystemdError))
 
@@ -123,9 +123,9 @@ def test_agent_relation_departed_service_stop_error(
 
 def test_agent_relation_departed(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch):
     """
-    arrange: patched State.from_charm that raises an InvalidState Error.
-    act: when the JenkinsAgentCharm is initialized.
-    assert: The agent falls into BlockedStatus.
+    arrange: initialized jenkins-agent charm related to jenkins-k8s charm with relation data.
+    act: remove the relation.
+    assert: The charm falls into BlockedStatus with the correct message.
     """
     monkeypatch.setattr(systemd, "service_stop", MagicMock())
 
