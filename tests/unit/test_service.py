@@ -78,7 +78,7 @@ def test_on_install(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatc
 def test_restart_service(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch):
     """
     arrange: Harness with mocked systemd and fs-related methods.
-    act: add relation with jenkins-k8s with dummy relation data and restart the agent service.
+    act: add relation with jenkins-k8s with mock relation data and restart the agent service.
     assert: Configuration file content should match the relation data and
     restart should not raise any error and the charm should be in active state.
     """
