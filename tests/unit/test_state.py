@@ -3,7 +3,6 @@
 #
 # Learn more about testing at: https://juju.is/docs/sdk/testing
 
-# pylint: disable=protected-access
 """Test for charm state."""
 
 import os
@@ -28,5 +27,6 @@ def test_from_charm_invalid_metadata(
     monkeypatch.setattr(os, "cpu_count", MagicMock(return_value=0))
     harness.begin()
     charm: JenkinsAgentCharm = harness.charm
+
     with pytest.raises(charm_state.InvalidStateError, match="Invalid executor state."):
         charm_state.State.from_charm(charm=charm)

@@ -1,11 +1,11 @@
 # Copyright 2024 Canonical Ltd.
 # See LICENSE file for licensing details.
+# pylint: disable=protected-access
 """Test for service interaction."""
 
 import os
 from pathlib import Path
 
-# pylint: disable=protected-access
 from unittest.mock import MagicMock
 
 import ops.testing
@@ -15,13 +15,7 @@ from charms.operator_libs_linux.v1 import systemd
 
 import service
 from charm import JenkinsAgentCharm
-
-from .test_agent import agent_relation_data
-
-service_config_template = f'''[Service]
-Environment="JENKINS_TOKEN={agent_relation_data.get('jenkins-agent-0_secret')}"
-Environment="JENKINS_URL={agent_relation_data.get('url')}"
-Environment="JENKINS_AGENT=jenkins-agent-0"'''
+from charm_state import AGENT_RELATION
 
 
 @pytest.mark.parametrize(
@@ -75,7 +69,12 @@ def test_on_install(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatc
     assert harness.charm.unit.status.name == ops.BlockedStatus.name
 
 
-def test_restart_service(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch):
+def test_restart_service(
+    harness: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    agent_relation_data: dict,
+    service_configuration_template: str,
+):
     """
     arrange: Harness with mocked systemd and fs-related methods.
     act: add relation with jenkins-k8s with mock relation data and restart the agent service.
@@ -92,17 +91,17 @@ def test_restart_service(harness: ops.testing.Harness, monkeypatch: pytest.Monke
     monkeypatch.setattr(systemd, "service_running", MagicMock(return_value=True))
     monkeypatch.setattr(os.path, "exists", MagicMock(return_value=True))
 
-    harness.add_relation("agent", "jenkins-k8s", unit_data=agent_relation_data)
+    harness.add_relation(AGENT_RELATION, "jenkins-k8s", unit_data=agent_relation_data)
     harness.begin()
     charm: JenkinsAgentCharm = harness.charm
     start_event_mock = MagicMock(spec=ops.StartEvent)
     charm._on_start(start_event_mock)
-    assert pathlib_write_text_mock.call_args[0][0] == service_config_template
+    assert pathlib_write_text_mock.call_args[0][0] == service_configuration_template
     assert charm.unit.status.name == ops.ActiveStatus.name
 
 
 def test_restart_service_write_config_type_error(
-    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, agent_relation_data: dict
 ):
     """
     arrange: Harness with mocked fs-related methods raising an error.
@@ -111,7 +110,7 @@ def test_restart_service_write_config_type_error(
     """
     monkeypatch.setattr(Path, "write_text", MagicMock(side_effect=TypeError))
     monkeypatch.setattr(Path, "mkdir", MagicMock)
-    harness.add_relation("agent", "jenkins-k8s", unit_data=agent_relation_data)
+    harness.add_relation(AGENT_RELATION, "jenkins-k8s", unit_data=agent_relation_data)
     harness.begin()
     charm: JenkinsAgentCharm = harness.charm
     with pytest.raises(
@@ -122,7 +121,7 @@ def test_restart_service_write_config_type_error(
 
 
 def test_restart_service_systemd_error(
-    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, agent_relation_data: dict
 ):
     """
     arrange: Harness with mocked systemd methods raising an error.
@@ -138,7 +137,7 @@ def test_restart_service_systemd_error(
         MagicMock(side_effect=systemd.SystemdError(systemd_error_message)),
     )
 
-    harness.add_relation("agent", "jenkins-k8s", unit_data=agent_relation_data)
+    harness.add_relation(AGENT_RELATION, "jenkins-k8s", unit_data=agent_relation_data)
     harness.begin()
     charm: JenkinsAgentCharm = harness.charm
     with pytest.raises(
