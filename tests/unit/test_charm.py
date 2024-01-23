@@ -3,7 +3,6 @@
 #
 # Learn more about testing at: https://juju.is/docs/sdk/testing
 
-# pylint: disable=protected-access
 """Test for charm hooks."""
 
 from unittest.mock import MagicMock
@@ -47,8 +46,7 @@ def test__on_upgrade_charm(harness: ops.testing.Harness, monkeypatch: pytest.Mon
     harness.begin()
 
     charm: JenkinsAgentCharm = harness.charm
-    upgrade_charm_event = MagicMock(spec=ops.UpgradeCharmEvent)
-    charm._on_upgrade_charm(upgrade_charm_event)
+    charm.on.upgrade_charm.emit()
 
     assert charm.unit.status.message == "Waiting for relation."
     assert charm.unit.status.name == ops.BlockedStatus.name
@@ -61,15 +59,14 @@ def test__on_config_changed(harness: ops.testing.Harness, monkeypatch: pytest.Mo
     assert: The charm correctly updates the relation databag.
     """
     harness.begin()
-    config_changed_event = MagicMock(spec=ops.ConfigChangedEvent)
     get_relation_mock = MagicMock()
     monkeypatch.setattr(ops.Model, "get_relation", get_relation_mock)
 
     charm: JenkinsAgentCharm = harness.charm
-    charm._on_config_changed(config_changed_event)
+    charm.on.config_changed.emit()
 
     agent_relation = get_relation_mock.return_value
-    assert agent_relation.data[harness._unit_name].update.call_count == 1
+    assert agent_relation.data[charm.unit.name].update.call_count == 1
 
 
 def test_restart_agent_service(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch):
@@ -83,7 +80,6 @@ def test_restart_agent_service(harness: ops.testing.Harness, monkeypatch: pytest
     get_credentials_mock = MagicMock()
     restart_mock = MagicMock()
     monkeypatch.setattr(service.JenkinsAgentService, "restart", restart_mock)
-
     harness.begin()
 
     charm: JenkinsAgentCharm = harness.charm

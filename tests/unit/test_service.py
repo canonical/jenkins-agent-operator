@@ -1,6 +1,8 @@
 # Copyright 2024 Canonical Ltd.
 # See LICENSE file for licensing details.
-# pylint: disable=protected-access
+#
+# Learn more about testing at: https://juju.is/docs/sdk/testing
+
 """Test for service interaction."""
 
 import os
@@ -39,11 +41,10 @@ def test_install_apt_package_gpg_key_error(
     monkeypatch.setattr(apt, "import_key", MagicMock())
     monkeypatch.setattr(apt, "update", MagicMock())
     monkeypatch.setattr(apt, "add_package", MagicMock())
-
     monkeypatch.setattr(apt, f, MagicMock(side_effect=[error_thrown]))
 
     with pytest.raises(RuntimeError, match="Error installing the agent service"):
-        charm._on_install(MagicMock(spec=ops.InstallEvent))
+        charm.on.install.emit()
 
 
 def test_on_install(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch):
@@ -56,7 +57,6 @@ def test_on_install(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatc
     apt_import_key_mock = MagicMock()
     apt_update_mock = MagicMock()
     apt_add_package_mock = MagicMock()
-
     apt_repository_mapping_mock.__contains__.return_value = False
     monkeypatch.setattr(apt, "RepositoryMapping", apt_repository_mapping_mock)
     monkeypatch.setattr(apt, "import_key", apt_import_key_mock)
@@ -64,6 +64,7 @@ def test_on_install(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(apt, "add_package", apt_add_package_mock)
 
     harness.begin_with_initial_hooks()
+
     assert apt_add_package_mock.call_count == 2
     assert harness.charm.unit.status.name == ops.BlockedStatus.name
 
@@ -93,8 +94,8 @@ def test_restart_service(
     harness.add_relation(AGENT_RELATION, "jenkins-k8s", unit_data=agent_relation_data)
     harness.begin()
     charm: JenkinsAgentCharm = harness.charm
-    start_event_mock = MagicMock(spec=ops.StartEvent)
-    charm._on_start(start_event_mock)
+    charm.on.start.emit()
+
     assert pathlib_write_text_mock.call_args[0][0] == service_configuration_template
     assert charm.unit.status.name == ops.ActiveStatus.name
 
@@ -112,6 +113,7 @@ def test_restart_service_write_config_type_error(
     harness.add_relation(AGENT_RELATION, "jenkins-k8s", unit_data=agent_relation_data)
     harness.begin()
     charm: JenkinsAgentCharm = harness.charm
+
     with pytest.raises(
         service.ServiceRestartError,
         match="Error interacting with the filesystem when rendering configuration file",
@@ -135,10 +137,10 @@ def test_restart_service_systemd_error(
         "daemon_reload",
         MagicMock(side_effect=systemd.SystemdError(systemd_error_message)),
     )
-
     harness.add_relation(AGENT_RELATION, "jenkins-k8s", unit_data=agent_relation_data)
     harness.begin()
     charm: JenkinsAgentCharm = harness.charm
+
     with pytest.raises(
         service.ServiceRestartError,
         match=f"Error starting the agent service:\n{systemd_error_message}",
@@ -157,4 +159,5 @@ def test_service_is_active_systemd_error(
     harness.begin()
     monkeypatch.setattr(systemd, "service_running", MagicMock(side_effect=SystemError))
     charm: JenkinsAgentCharm = harness.charm
+
     assert not charm.jenkins_agent_service.is_active
