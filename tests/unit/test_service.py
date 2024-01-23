@@ -37,7 +37,7 @@ def test_install_apt_package_gpg_key_error(
     """
     harness.begin()
     charm: JenkinsAgentCharm = harness.charm
-    monkeypatch.setattr(apt, "RepositoryMapping", MagicMock())
+    monkeypatch.setattr(apt, "RepositoryMapping", MagicMock(spec=apt.RepositoryMapping))
     monkeypatch.setattr(apt, "import_key", MagicMock())
     monkeypatch.setattr(apt, "update", MagicMock())
     monkeypatch.setattr(apt, "add_package", MagicMock())
