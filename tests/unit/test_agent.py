@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, PropertyMock
 
 import ops.testing
 import pytest
+import pathlib
 from charms.operator_libs_linux.v1 import systemd
 
 import service
@@ -141,6 +142,8 @@ def test_agent_relation_departed(
     assert: The charm falls into BlockedStatus with the correct message.
     """
     monkeypatch.setattr(systemd, "service_stop", MagicMock())
+    path_unlink_mock = MagicMock()
+    monkeypatch.setattr(pathlib.Path, "unlink", path_unlink_mock)
 
     harness = harness_with_agent_relation
     harness.begin()
@@ -152,3 +155,4 @@ def test_agent_relation_departed(
     charm: JenkinsAgentCharm = harness.charm
     assert charm.unit.status.name == ops.BlockedStatus.name
     assert charm.unit.status.message == "Waiting for config/relation."
+    path_unlink_mock.assert_called_once()
