@@ -176,6 +176,11 @@ class JenkinsAgentService:
             logger.error("service %s failed to stop", AGENT_SERVICE_NAME)
             raise ServiceStopError(f"service {AGENT_SERVICE_NAME} failed to stop") from exc
 
+    def clear_service_configuration(self) -> None:
+        """Clear the service's configuration file."""
+        config_file = Path(f"{SYSTEMD_SERVICE_CONF_DIR}/override.conf")
+        config_file.unlink(missing_ok=True)
+
     def _startup_check(self) -> bool:
         """Check whether the service was correctly started.
 

@@ -93,4 +93,5 @@ class Observer(ops.Object):
         except service.ServiceStopError:
             self.charm.unit.status = ops.BlockedStatus("Error stopping the agent service")
             return
+        self.jenkins_agent_service.clear_service_configuration()
         self.charm.unit.status = ops.BlockedStatus("Waiting for config/relation.")
