@@ -164,8 +164,8 @@ class JenkinsAgentService:
         if not self._startup_check():
             raise ServiceRestartError("Error waiting for the agent service to start")
 
-    def stop(self) -> None:
-        """Stop the agent service.
+    def reset(self) -> None:
+        """Stop the agent service and clear its configuration file.
 
         Raises:
             ServiceStopError: if systemctl stop returns a non-zero exit code.
@@ -175,9 +175,6 @@ class JenkinsAgentService:
         except systemd.SystemdError as exc:
             logger.error("service %s failed to stop", AGENT_SERVICE_NAME)
             raise ServiceStopError(f"service {AGENT_SERVICE_NAME} failed to stop") from exc
-
-    def clear_service_configuration(self) -> None:
-        """Clear the service's configuration file."""
         config_file = Path(f"{SYSTEMD_SERVICE_CONF_DIR}/override.conf")
         config_file.unlink(missing_ok=True)
 
