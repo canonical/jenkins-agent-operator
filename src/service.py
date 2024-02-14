@@ -18,7 +18,7 @@ from charm_state import State
 logger = logging.getLogger(__name__)
 AGENT_SERVICE_NAME = "jenkins-agent"
 APT_PACKAGE_NAME = "jenkins-agent"
-APT_PACKAGE_VERSION = "1.0.4"
+APT_PACKAGE_VERSION = "1.0.5"
 SYSTEMD_SERVICE_CONF_DIR = "/etc/systemd/system/jenkins-agent.service.d/"
 PPA_URI = "https://ppa.launchpadcontent.net/canonical-is-devops/jenkins-agent-charm/ubuntu/"
 PPA_DEB_SRC = "deb-https://ppa.launchpadcontent.net/canonical-is-devops/jenkins-agent-charm/ubuntu/-"  # noqa: E501 pylint: disable=line-too-long
