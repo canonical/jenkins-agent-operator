@@ -1,4 +1,4 @@
-ops==2.10.0
+ops==2.11.0
 requests==2.31.0
 pydantic==1.10.14
 jinja2==3.1.3
