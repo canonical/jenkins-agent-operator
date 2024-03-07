@@ -43,6 +43,7 @@ class JenkinsAgentCharm(ops.CharmBase):
         self.framework.observe(self.on.start, self._on_start)
         self.framework.observe(self.on.config_changed, self._on_config_changed)
         self.framework.observe(self.on.upgrade_charm, self._on_upgrade_charm)
+        self.framework.observe(self.on.update_status, self._on_update_status)
 
     def _on_install(self, _: ops.InstallEvent) -> None:
         """Handle install event, setup the agent service.
@@ -93,6 +94,15 @@ class JenkinsAgentCharm(ops.CharmBase):
             raise RuntimeError("Error restarting the agent service") from exc
 
         self.model.unit.status = ops.ActiveStatus()
+
+    def _on_update_status(self, _: ops.UpdateStatusEvent) -> None:
+        """Update status event hook.
+
+        Raises:
+            RuntimeError: when the service is not running.
+        """
+        if not self.jenkins_agent_service.is_active:
+            raise RuntimeError("jenkins-agent service is not running")
 
 
 if __name__ == "__main__":  # pragma: no cover

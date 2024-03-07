@@ -88,7 +88,9 @@ class JenkinsAgentService:
     def is_active(self) -> bool:
         """Indicate if the jenkins agent service is active."""
         try:
-            return systemd.service_running(AGENT_SERVICE_NAME)
+            return os.path.exists(str(AGENT_READY_PATH)) and systemd.service_running(
+                AGENT_SERVICE_NAME
+            )
         except SystemError as exc:
             logger.error("Failed to call systemctl:\n%s", exc)
             return False
@@ -187,7 +189,6 @@ class JenkinsAgentService:
         timeout = time.time() + STARTUP_CHECK_TIMEOUT
         while time.time() < timeout:
             time.sleep(STARTUP_CHECK_INTERVAL)
-            service_up = os.path.exists(str(AGENT_READY_PATH)) and self.is_active
-            if service_up:
+            if self.is_active:
                 break
-        return os.path.exists(str(AGENT_READY_PATH)) and self.is_active
+        return self.is_active
