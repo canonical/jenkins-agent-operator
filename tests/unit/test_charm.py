@@ -5,7 +5,7 @@
 
 """Test for charm hooks."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, PropertyMock
 
 import ops
 import ops.testing
@@ -41,7 +41,7 @@ def test__on_upgrade_charm(harness: ops.testing.Harness, monkeypatch: pytest.Mon
     act: when _on_upgrade_charm is called.
     assert: The agent falls into waiting status with the correct message.
     """
-    monkeypatch.setattr(service.JenkinsAgentService, "is_active", MagicMock(return_value=True))
+    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
     monkeypatch.setattr(service.JenkinsAgentService, "restart", MagicMock())
     harness.begin()
 
@@ -129,3 +129,32 @@ def test_restart_agent_service_service_restart_error(
     monkeypatch.setattr(charm.state, "agent_relation_credentials", get_credentials_mock)
     with pytest.raises(RuntimeError, match="Error restarting the agent service"):
         charm.restart_agent_service()
+
+
+def test_update_status_service_not_active(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
+):
+    """
+    arrange: given a charm with patched relation.
+    act: when _on_config_changed is called.
+    assert: The charm correctly updates the relation databag.
+    """
+    harness.begin()
+    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=False))
+
+    with pytest.raises(RuntimeError, match="jenkins-agent service is not running"):
+        harness.charm.on.update_status.emit()
+
+
+def test_update_status_service_active(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
+):
+    """
+    arrange: given a charm with patched relation.
+    act: when _on_config_changed is called.
+    assert: The charm correctly updates the relation databag.
+    """
+    harness.begin()
+    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
+
+    harness.charm.on.update_status.emit()
