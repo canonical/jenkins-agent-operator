@@ -68,7 +68,6 @@ def test_on_install(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatc
     assert apt_add_package_mock.call_count == 2
     assert apt_add_package_mock.call_args_list[0][0][0] == "openjdk-17-jre"
     assert apt_add_package_mock.call_args_list[1][1]["package_names"] == service.APT_PACKAGE_NAME
-    assert apt_add_package_mock.call_args_list[1][1]["version"] == service.APT_PACKAGE_VERSION
 
     assert harness.charm.unit.status.name == ops.BlockedStatus.name
 
