@@ -17,7 +17,7 @@ from charm_state import State
 
 logger = logging.getLogger(__name__)
 AGENT_SERVICE_NAME = "jenkins-agent"
-APT_PACKAGE_VERSION = "1.0.6"
+APT_PACKAGE_VERSION = "1.0.7"
 APT_PACKAGE_NAME = f"jenkins-agent-{APT_PACKAGE_VERSION}"
 SYSTEMD_SERVICE_CONF_DIR = "/etc/systemd/system/jenkins-agent.service.d/"
 PPA_URI = "https://ppa.launchpadcontent.net/canonical-is-devops/jenkins-agent-charm/ubuntu/"

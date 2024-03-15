@@ -101,10 +101,8 @@ class JenkinsAgentCharm(ops.CharmBase):
         Raises:
             RuntimeError: when the service is not running.
         """
-        logger.info("Recalculating charm status")
         if self.model.get_relation(AGENT_RELATION) and not self.jenkins_agent_service.is_active:
             logger.error("agent related to Jenkins but service is not active")
-            self.restart_agent_service()
             raise RuntimeError("jenkins-agent service is not running")
 
         if not self.model.get_relation(AGENT_RELATION):
