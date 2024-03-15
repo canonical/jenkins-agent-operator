@@ -135,26 +135,46 @@ def test_update_status_service_not_active(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
 ):
     """
-    arrange: given a charm with patched relation.
-    act: when _on_config_changed is called.
-    assert: The charm correctly updates the relation databag.
+    arrange: given a charm with relation to jenkins and the service is not active.
+    act: when update-status hook is fired.
+    assert: The charm correctly raise a runtime error.
     """
-    harness.begin()
+    harness.add_relation(charm_state.AGENT_RELATION, "jenkins-k8s")
     monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=False))
+    harness.begin()
 
     with pytest.raises(RuntimeError, match="jenkins-agent service is not running"):
         harness.charm.on.update_status.emit()
+
+
+def test_update_status_service_waiting_for_relation(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
+):
+    """
+    arrange: given a charm without a relation to jenkins.
+    act: when update-status hook is fired.
+    assert: The charm correctly sets the status to blocked.
+    """
+    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=False))
+    harness.begin()
+
+    harness.charm.on.update_status.emit()
+
+    assert harness.charm.unit.status.name == ops.BlockedStatus.name
 
 
 def test_update_status_service_active(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
 ):
     """
-    arrange: given a charm with patched relation.
-    act: when _on_config_changed is called.
-    assert: The charm correctly updates the relation databag.
+    arrange: given a charm with relation to jenkins and the service is active.
+    act: when update-status hook is fired.
+    assert: The charm correctly sets the status to active.
     """
-    harness.begin()
+    harness.add_relation(charm_state.AGENT_RELATION, "jenkins-k8s")
     monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
+    harness.begin()
 
     harness.charm.on.update_status.emit()
+
+    assert harness.charm.unit.status.name == ops.ActiveStatus.name
