@@ -15,3 +15,4 @@ jobs:
         -c "sudo microk8s config > ${GITHUB_WORKSPACE}/kube-config
         chmod +x tests/integration/pre_run_script.sh
         ./tests/integration/pre_run_script.sh"
+      juju-channel: 3.1/stable
