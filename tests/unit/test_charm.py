@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, PropertyMock
 import ops
 import ops.testing
 import pytest
+from charms.operator_libs_linux.v1 import systemd
 
 import charm_state
 import service
@@ -173,6 +174,27 @@ def test_update_status_service_active(
     """
     harness.add_relation(charm_state.AGENT_RELATION, "jenkins-k8s")
     monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
+    monkeypatch.setattr(systemd, "_systemctl", MagicMock(side_effect=systemd.SystemdError))
+
+    harness.begin()
+
+    harness.charm.on.update_status.emit()
+
+    assert harness.charm.unit.status.name == ops.ActiveStatus.name
+
+
+def test_update_status_reset_failed_state_systemd_error(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
+):
+    """
+    arrange: given a charm with relation to jenkins and the service is active.
+    act: when update-status hook is fired with reset-failed raising an error.
+    assert: The charm correctly ignore the error and sets the status to active.
+    """
+    harness.add_relation(charm_state.AGENT_RELATION, "jenkins-k8s")
+    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
+    monkeypatch.setattr(systemd, "_systemctl", MagicMock(side_effect=systemd.SystemdError))
+
     harness.begin()
 
     harness.charm.on.update_status.emit()

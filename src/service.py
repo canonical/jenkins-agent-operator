@@ -166,6 +166,20 @@ class JenkinsAgentService:
         if not self._startup_check():
             raise ServiceRestartError("Error waiting for the agent service to start")
 
+    def reset_failed_state(self) -> None:
+        """Reset NRestart count of service back to 0.
+
+        The service keeps track of the 'restart-count' and blocks further restarts
+        if the maximum allowed is reached. This count is not reset when the service restarts
+        so we need to do it manually.
+        """
+        try:
+            # Disable protected-access here because reset-failed is not implemented in the lib
+            systemd._systemctl("reset-failed", AGENT_SERVICE_NAME)  # pylint: disable=W0212
+        except systemd.SystemdError:
+            # We only log the exception here as this is not critical
+            logger.error("Failed to reset failed state")
+
     def reset(self) -> None:
         """Stop the agent service and clear its configuration file.
 
