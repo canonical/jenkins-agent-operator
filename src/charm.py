@@ -109,6 +109,11 @@ class JenkinsAgentCharm(ops.CharmBase):
             self.model.unit.status = ops.BlockedStatus("Waiting for relation.")
             return
 
+        # set NRestart of the service back to 0
+        # We do it here because at this point we can be certain that
+        # the service is up and running
+        self.jenkins_agent_service.reset_failed_state()
+
         self.model.unit.status = ops.ActiveStatus()
 
 

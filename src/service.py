@@ -17,7 +17,7 @@ from charm_state import State
 
 logger = logging.getLogger(__name__)
 AGENT_SERVICE_NAME = "jenkins-agent"
-APT_PACKAGE_VERSION = "1.0.8"
+APT_PACKAGE_VERSION = "1.0.9"
 APT_PACKAGE_NAME = f"jenkins-agent-{APT_PACKAGE_VERSION}"
 SYSTEMD_SERVICE_CONF_DIR = "/etc/systemd/system/jenkins-agent.service.d/"
 PPA_URI = "https://ppa.launchpadcontent.net/canonical-is-devops/jenkins-agent-charm/ubuntu/"
@@ -165,6 +165,20 @@ class JenkinsAgentService:
         # Check if the service is running after startup
         if not self._startup_check():
             raise ServiceRestartError("Error waiting for the agent service to start")
+
+    def reset_failed_state(self) -> None:
+        """Reset NRestart count of service back to 0.
+
+        The service keeps track of the 'restart-count' and blocks further restarts
+        if the maximum allowed is reached. This count is not reset when the service restarts
+        so we need to do it manually.
+        """
+        try:
+            # Disable protected-access here because reset-failed is not implemented in the lib
+            systemd._systemctl("reset-failed", AGENT_SERVICE_NAME)  # pylint: disable=W0212
+        except systemd.SystemdError:
+            # We only log the exception here as this is not critical
+            logger.error("Failed to reset failed state")
 
     def reset(self) -> None:
         """Stop the agent service and clear its configuration file.
