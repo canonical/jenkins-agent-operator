@@ -17,6 +17,7 @@ from charms.operator_libs_linux.v1 import systemd
 import service
 from charm import JenkinsAgentCharm
 from charm_state import AGENT_RELATION
+from service import JenkinsAgentService, PackageInstallError
 
 
 @pytest.mark.parametrize(
@@ -70,6 +71,39 @@ def test_on_install(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatc
     assert apt_add_package_mock.call_args_list[1][1]["package_names"] == service.APT_PACKAGE_NAME
 
     assert harness.charm.unit.status.name == ops.BlockedStatus.name
+
+
+def test_on_install_packages_fail(monkeypatch: pytest.MonkeyPatch):
+    """
+    arrange: Given a monkeypatched apt lib that raises an error.
+    act: when install_apt_packages is called.
+    assert: PackageInstallError is raised.
+    """
+    monkeypatch.setattr(apt, "add_package", MagicMock(side_effect=apt.PackageNotFoundError))
+
+    with pytest.raises(PackageInstallError):
+        JenkinsAgentService.install_apt_packages(["hello", "world"])
+
+
+@pytest.mark.parametrize(
+    "packages",
+    [
+        pytest.param(tuple(), id="No packages"),
+        pytest.param(tuple("hello", "world"), id="Has packages"),
+    ],
+)
+def test_on_install_packages(monkeypatch: pytest.MonkeyPatch, packages: tuple[str, ...]):
+    """
+    arrange: Given a monkeypatched apt lib and list of packages to install.
+    act: when install_apt_packages is called.
+    assert: package install call is made.
+    """
+    monkeypatch.setattr(apt, "add_package", (apt_mock := MagicMock()))
+
+    JenkinsAgentService.install_apt_packages(packages)
+
+    if packages:
+        apt_mock.assert_has_calls()
 
 
 def test_restart_service(

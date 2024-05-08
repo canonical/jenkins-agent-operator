@@ -10,6 +10,9 @@ import string
 import jenkinsapi.jenkins
 from juju.application import Application
 from juju.model import Model
+from juju.unit import Unit
+
+from charm_state import APT_PACKAGES_CONFIG
 
 from .conftest import NUM_AGENT_UNITS, assert_job_success
 
@@ -63,3 +66,21 @@ async def test_agent_relation(
     assert len(nodes.values()) == NUM_AGENT_UNITS + 1
 
     assert_job_success(jenkins_client, jenkins_agent_application.name, "machine")
+
+
+async def test_agent_packages(
+    model: Model,
+    jenkins_agent_application: Application,
+):
+    """
+    arrange: given a jenkins agent application.
+    act: when the apt-packages configuration is set.
+    assert: the defined packages are installed.
+    """
+    await jenkins_agent_application.set_config({APT_PACKAGES_CONFIG: "bzr, iputils-ping"})
+    await model.wait_for_idle()
+
+    unit: Unit = jenkins_agent_application.units[0]
+
+    assert "/usr/bin/bzr" == await unit.ssh(["which", "bzr"])
+    assert "/usr/bin/ping" == await unit.ssh(["which", "ping"])
