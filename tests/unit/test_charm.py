@@ -5,16 +5,21 @@
 
 """Test for charm hooks."""
 
+# Need access to protected functions for testing
+# pylint:disable=protected-access
+
 from unittest.mock import MagicMock, PropertyMock
 
 import ops
 import ops.testing
 import pytest
+from charms.operator_libs_linux.v0 import apt
 from charms.operator_libs_linux.v1 import systemd
 
 import charm_state
 import service
 from charm import JenkinsAgentCharm
+from charm_state import APT_PACKAGES_CONFIG
 
 
 def test___init___invalid_state(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch):
@@ -50,6 +55,26 @@ def test__on_upgrade_charm(harness: ops.testing.Harness, monkeypatch: pytest.Mon
     charm.on.upgrade_charm.emit()
 
     assert charm.unit.status.message == "Waiting for relation."
+    assert charm.unit.status.name == ops.BlockedStatus.name
+
+
+def test__on_config_changed_apt_install_fail(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
+):
+    """
+    arrange: given a charm with patched relation.
+    act: when _on_config_changed is called.
+    assert: The charm correctly updates the relation databag.
+    """
+    harness.update_config({APT_PACKAGES_CONFIG: "hello,world"})
+    harness.begin()
+    get_relation_mock = MagicMock()
+    monkeypatch.setattr(apt, "add_package", MagicMock(side_effect=apt.PackageNotFoundError))
+    monkeypatch.setattr(ops.Model, "get_relation", get_relation_mock)
+
+    charm: JenkinsAgentCharm = harness.charm
+    charm._on_config_changed(MagicMock())
+
     assert charm.unit.status.name == ops.BlockedStatus.name
 
 

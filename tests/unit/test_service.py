@@ -89,7 +89,7 @@ def test_on_install_packages_fail(monkeypatch: pytest.MonkeyPatch):
     "packages",
     [
         pytest.param(tuple(), id="No packages"),
-        pytest.param(tuple("hello", "world"), id="Has packages"),
+        pytest.param(("hello", "world"), id="Has packages"),
     ],
 )
 def test_on_install_packages(monkeypatch: pytest.MonkeyPatch, packages: tuple[str, ...]):
@@ -103,7 +103,7 @@ def test_on_install_packages(monkeypatch: pytest.MonkeyPatch, packages: tuple[st
     JenkinsAgentService.install_apt_packages(packages)
 
     if packages:
-        apt_mock.assert_has_calls()
+        apt_mock.assert_called_once()
 
 
 def test_restart_service(

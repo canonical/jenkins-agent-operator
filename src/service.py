@@ -125,18 +125,21 @@ class JenkinsAgentService:
             raise PackageInstallError("Error installing the agent package") from exc
 
     @classmethod
-    def install_apt_packages(cls, packages: Iterable[str]):
+    def install_apt_packages(cls, packages: Iterable[str]) -> None:
         """Install apt packages.
 
         Args:
             packages: The apt packages to install.
+
+        Raises:
+            PackageInstallError: If there was an error installing the package.
         """
         to_install = list(packages)
         if not to_install:
             return
         try:
             apt.add_package(to_install, update_cache=True)
-        except apt.PackageNotFoundError as exc:
+        except apt.Error as exc:
             raise PackageInstallError from exc
 
     def restart(self) -> None:
