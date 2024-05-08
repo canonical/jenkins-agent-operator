@@ -17,6 +17,8 @@ from typing_extensions import Literal
 # agent relation name
 AGENT_RELATION = "agent"
 
+APT_PACKAGES_CONFIG = "apt-packages"
+
 logger = logging.getLogger()
 
 
@@ -115,6 +117,21 @@ def _get_credentials_from_agent_relation(
     return Credentials(address=address, secret=secret)
 
 
+def _get_packages_to_install(charm: ops.CharmBase) -> tuple[str, ...]:
+    """Get list of apt packages to install from charm configuration.
+
+    Args:
+        charm: The charm instance.
+
+    Returns:
+        The list of apt packages to install.
+    """
+    packages = charm.config.get(APT_PACKAGES_CONFIG, "")
+    if not packages:
+        return ()
+    return tuple(package.strip() for package in packages.split(","))
+
+
 @dataclass
 class State:
     """The Jenkins agent state.
@@ -123,12 +140,14 @@ class State:
         agent_meta: The Jenkins agent metadata to register on Jenkins server.
         agent_relation_credentials: The full set of credentials from the agent relation. None if
             partial data is set or the credentials do not belong to current agent.
+        apt_packages: The list of apt packages to install on the unit.
         unit_data: Data about the current unit.
         jenkins_agent_service_name: The Jenkins agent workload container name.
     """
 
     agent_meta: AgentMeta
     agent_relation_credentials: typing.Optional[Credentials]
+    apt_packages: tuple[str, ...]
     unit_data: UnitData
     jenkins_agent_service_name: str = "jenkins-agent"
 
@@ -176,5 +195,6 @@ class State:
         return cls(
             agent_meta=agent_meta,
             agent_relation_credentials=agent_relation_credentials,
+            apt_packages=_get_packages_to_install(charm),
             unit_data=unit_data,
         )

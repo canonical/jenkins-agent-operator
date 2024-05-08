@@ -8,6 +8,7 @@ import os
 import pwd
 import time
 from pathlib import Path
+from typing import Iterable
 
 from charms.operator_libs_linux.v0 import apt
 from charms.operator_libs_linux.v1 import systemd
@@ -122,6 +123,21 @@ class JenkinsAgentService:
             apt.add_package(package_names=APT_PACKAGE_NAME)
         except (apt.PackageError, apt.PackageNotFoundError, apt.GPGKeyError) as exc:
             raise PackageInstallError("Error installing the agent package") from exc
+
+    @classmethod
+    def install_apt_packages(cls, packages: Iterable[str]):
+        """Install apt packages.
+
+        Args:
+            packages: The apt packages to install.
+        """
+        to_install = list(packages)
+        if not to_install:
+            return
+        try:
+            apt.add_package(to_install, update_cache=True)
+        except apt.PackageNotFoundError as exc:
+            raise PackageInstallError from exc
 
     def restart(self) -> None:
         """Start the agent service.
