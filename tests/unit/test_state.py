@@ -9,6 +9,7 @@
 # pylint:disable=protected-access
 
 import os
+import typing
 from unittest.mock import MagicMock
 
 import ops
@@ -44,7 +45,7 @@ def test_from_charm_invalid_metadata(
     ],
 )
 def test__get_packages_to_install(
-    harness: ops.testing.Harness, packages: str, expected: tuple[str, ...]
+    harness: ops.testing.Harness, packages: str, expected: typing.Tuple[str, ...]
 ):
     """
     arrange: given charm apt-packages config.

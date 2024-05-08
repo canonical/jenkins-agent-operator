@@ -6,6 +6,7 @@
 """Test for service interaction."""
 
 import os
+import typing
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -92,7 +93,7 @@ def test_on_install_packages_fail(monkeypatch: pytest.MonkeyPatch):
         pytest.param(("hello", "world"), id="Has packages"),
     ],
 )
-def test_on_install_packages(monkeypatch: pytest.MonkeyPatch, packages: tuple[str, ...]):
+def test_on_install_packages(monkeypatch: pytest.MonkeyPatch, packages: typing.Tuple[str, ...]):
     """
     arrange: Given a monkeypatched apt lib and list of packages to install.
     act: when install_apt_packages is called.

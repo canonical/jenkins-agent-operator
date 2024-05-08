@@ -117,7 +117,7 @@ def _get_credentials_from_agent_relation(
     return Credentials(address=address, secret=secret)
 
 
-def _get_packages_to_install(charm: ops.CharmBase) -> tuple[str, ...]:
+def _get_packages_to_install(charm: ops.CharmBase) -> typing.Tuple[str, ...]:
     """Get list of apt packages to install from charm configuration.
 
     Args:
@@ -147,7 +147,7 @@ class State:
 
     agent_meta: AgentMeta
     agent_relation_credentials: typing.Optional[Credentials]
-    apt_packages: tuple[str, ...]
+    apt_packages: typing.Tuple[str, ...]
     unit_data: UnitData
     jenkins_agent_service_name: str = "jenkins-agent"
 
