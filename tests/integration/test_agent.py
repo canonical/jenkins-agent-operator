@@ -82,5 +82,5 @@ async def test_agent_packages(
 
     unit: Unit = jenkins_agent_application.units[0]
 
-    assert "/usr/bin/bzr" == await unit.ssh(["which", "bzr"])
-    assert "/usr/bin/ping" == await unit.ssh(["which", "ping"])
+    assert "/usr/bin/bzr" == await unit.ssh("which bzr")
+    assert "/usr/bin/ping" == await unit.ssh("which ping")
