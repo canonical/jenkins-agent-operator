@@ -59,8 +59,6 @@ class JenkinsAgentCharm(ops.CharmBase):
 
     def _on_config_changed(self, _: ops.ConfigChangedEvent) -> None:
         """Handle config changed event. Update the agent's label in the relation's databag."""
-        logger.info("CONFIG CHANGED")
-        logger.info("%s", self.state.apt_packages)
         try:
             self.jenkins_agent_service.install_apt_packages(self.state.apt_packages)
         except service.PackageInstallError as exc:
