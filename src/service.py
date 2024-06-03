@@ -17,8 +17,8 @@ from charm_state import State
 
 logger = logging.getLogger(__name__)
 AGENT_SERVICE_NAME = "jenkins-agent"
-APT_PACKAGE_NAME = "jenkins-agent"
-APT_PACKAGE_VERSION = "1.0.6"
+APT_PACKAGE_VERSION = "1.0.10"
+APT_PACKAGE_NAME = f"jenkins-agent-{APT_PACKAGE_VERSION}"
 SYSTEMD_SERVICE_CONF_DIR = "/etc/systemd/system/jenkins-agent.service.d/"
 PPA_URI = "https://ppa.launchpadcontent.net/canonical-is-devops/jenkins-agent-charm/ubuntu/"
 PPA_DEB_SRC = "deb-https://ppa.launchpadcontent.net/canonical-is-devops/jenkins-agent-charm/ubuntu/-"  # noqa: E501 pylint: disable=line-too-long
@@ -88,7 +88,9 @@ class JenkinsAgentService:
     def is_active(self) -> bool:
         """Indicate if the jenkins agent service is active."""
         try:
-            return systemd.service_running(AGENT_SERVICE_NAME)
+            return os.path.exists(str(AGENT_READY_PATH)) and systemd.service_running(
+                AGENT_SERVICE_NAME
+            )
         except SystemError as exc:
             logger.error("Failed to call systemctl:\n%s", exc)
             return False
@@ -117,7 +119,7 @@ class JenkinsAgentService:
             # Install the necessary packages
             apt.update()
             apt.add_package("openjdk-17-jre")
-            apt.add_package(package_names=APT_PACKAGE_NAME, version=APT_PACKAGE_VERSION)
+            apt.add_package(package_names=APT_PACKAGE_NAME)
         except (apt.PackageError, apt.PackageNotFoundError, apt.GPGKeyError) as exc:
             raise PackageInstallError("Error installing the agent package") from exc
 
@@ -164,6 +166,20 @@ class JenkinsAgentService:
         if not self._startup_check():
             raise ServiceRestartError("Error waiting for the agent service to start")
 
+    def reset_failed_state(self) -> None:
+        """Reset NRestart count of service back to 0.
+
+        The service keeps track of the 'restart-count' and blocks further restarts
+        if the maximum allowed is reached. This count is not reset when the service restarts
+        so we need to do it manually.
+        """
+        try:
+            # Disable protected-access here because reset-failed is not implemented in the lib
+            systemd._systemctl("reset-failed", AGENT_SERVICE_NAME)  # pylint: disable=W0212
+        except systemd.SystemdError:
+            # We only log the exception here as this is not critical
+            logger.error("Failed to reset failed state")
+
     def reset(self) -> None:
         """Stop the agent service and clear its configuration file.
 
@@ -187,7 +203,6 @@ class JenkinsAgentService:
         timeout = time.time() + STARTUP_CHECK_TIMEOUT
         while time.time() < timeout:
             time.sleep(STARTUP_CHECK_INTERVAL)
-            service_up = os.path.exists(str(AGENT_READY_PATH)) and self.is_active
-            if service_up:
+            if self.is_active:
                 break
-        return os.path.exists(str(AGENT_READY_PATH)) and self.is_active
+        return self.is_active

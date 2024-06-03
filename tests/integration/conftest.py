@@ -100,7 +100,7 @@ async def jenkins_server_model_fixture(
 @pytest_asyncio.fixture(scope="function", name="jenkins_server")
 async def jenkins_server_fixture(jenkins_server_model: Model) -> Application:
     """The jenkins machine server."""
-    jenkins = await jenkins_server_model.deploy("jenkins-k8s")
+    jenkins = await jenkins_server_model.deploy("jenkins-k8s", channel="latest/edge")
     await jenkins_server_model.wait_for_idle(
         apps=[jenkins.name],
         timeout=20 * 60,
