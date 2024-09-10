@@ -16,10 +16,10 @@ bootstrapping different clouds [here](https://juju.is/docs/olm/get-started-with-
 Use `juju bootstrap localhost localhost` to bootstrap a `lxd` machine controller with the name
 `localhost` for tutorial purposes.
 
-### Setting up the tutorial model
+### Set up the tutorial model
 
-To easily clean up the resources and to separate your workload from the contents of this tutorial,
-it is recommended to set up a new model with the following command.
+To easily clean up the resources and to separate your workload from the contents of this tutorial, 
+set up a new model with the following command.
 
 ```
 juju add-model tutorial
@@ -46,7 +46,7 @@ Use `juju bootstrap microk8s localhost-microk8s` to bootstrap a `microk8s` machi
 
 Then, switch to your kubernetes controller add a model for the jenkins-k8s charm with the following command:
 ```
-juju switch -c localhost-microk8s
+juju switch localhost-microk8s
 juju add-model jenkins-tutorial
 ```
 
@@ -55,14 +55,16 @@ Continue by deploying the jenkins-k8s charm. by default it will deploy the lates
 juju deploy jenkins-k8s --channel=latest/edge
 ```
 
-The Jenkins application can only have a single server unit. Adding more units through --num-units parameter will cause the application to misbehave.
+> NOTE: The Jenkins application can only have a single server unit. Adding more units through the `--num-units` parameter will cause the application to misbehave.
 
 #### Create an offer for Cross Model Integration
 
 To integrate charms
-[across different models](https://juju.is/docs/juju/manage-cross-model-integrations), a juju
-[`offer`](https://juju.is/docs/juju/manage-cross-model-integrations#heading--create-an-offer) is
+[across different models](https://juju.is/docs/juju/manage-cross-model-integrations), a Juju
+[`offer`](https://juju.is/docs/juju/juju-offer) is
 required.
+
+> See more: [Create an offer](https://juju.is/docs/juju/manage-cross-model-integrations#heading--create-an-offer)
 
 Create an offer of the `jenkins-k8s` charm's `agent` integration.
 
@@ -78,8 +80,11 @@ Application "jenkins-k8s" endpoints [agent] available at "admin/jenkins-tutorial
 
 #### Integrate the Jenkins agent charm through the offer
 
-Switch back to the k8s model where the `jenkins-agent` charm is deployed. An example of the switch
-command looks like the following: `juju switch localhost:tutorial`.
+Switch back to the k8s model where the `jenkins-agent` charm is deployed: 
+
+```
+juju switch localhost:tutorial
+```
 
 Integrate the `jenkins-agent` charm to the `jenkins-k8s` server charm through the offer.
 The syntax of the offer is as follows: `<controller>:<user>/<model>.<charm>`.
@@ -89,12 +94,12 @@ juju integrate jenkins-agent:agent localhost-microk8s:admin/jenkins-tutorial.jen
 ```
 
 
-### Cleaning up the environment
+### Clean up the environment
 
 Congratulations! You have successfully finished the tutorial. You can now remove the
 models that you’ve created using the following command.
 
 ```
-juju destroy model localhost-microk8s:admin/jenkins-tutorial -y --release-storage
-juju destroy model localhost:admin/tutorial -y --release-storage
+juju destroy-model localhost-microk8s:admin/jenkins-tutorial --destroy-storage
+juju destroy-model localhost:admin/tutorial --destroy-storage
 ```
