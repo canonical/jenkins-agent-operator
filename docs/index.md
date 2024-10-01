@@ -1,4 +1,4 @@
-# Jenkins-agent Operator
+# Jenkins Agent Operator
 
 A [Juju](https://juju.is/) [charm](https://juju.is/docs/olm/charmed-operators) deploying and managing [Jenkins](https://www.jenkins.io/) agents on machines. It is configurable to integrate with a Jenkins charm deployed in another Juju model.
 
