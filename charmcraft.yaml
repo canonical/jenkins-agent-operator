@@ -47,3 +47,7 @@ config:
       description: |
         Comma-separated list of labels to be assigned to the agent in Jenkins. If not set it will
         default to the agents hardware identifier, e.g.: 'x86_64'
+
+provides:
+  agent:
+    interface: jenkins_agent_v0
