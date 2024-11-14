@@ -111,7 +111,8 @@ class JenkinsAgentService:
         agent_service = Path("templates/jenkins_agent.service")
         JENKINS_AGENT_SYSTEMD_PATH.write_text(agent_service.read_text(encoding="utf-8"), encoding="utf-8")
         agent_script = Path("templates/jenkins_agent.sh")
-        JENKINS_AGENT_START_SCRIPT_PATH.write_text(agent_script.read_text(encoding="utf-8"), encoding="utf-8")
+        self._render_file(JENKINS_AGENT_START_SCRIPT_PATH, agent_script.read_text(encoding="utf-8"), 755)
+
         try:
             apt.add_package(REQUIRED_PACKAGES, update_cache=True)
         except (apt.PackageError, apt.PackageNotFoundError) as exc:
