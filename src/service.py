@@ -17,15 +17,8 @@ from charm_state import State
 
 logger = logging.getLogger(__name__)
 AGENT_SERVICE_NAME = "jenkins-agent"
-APT_PACKAGE_VERSION = "1.0.10"
-APT_PACKAGE_NAME = f"jenkins-agent-{APT_PACKAGE_VERSION}"
-REQUIRED_PACKAGES = [
-    "openjdk-21-jre"
-]
+REQUIRED_PACKAGES = ["openjdk-21-jre"]
 SYSTEMD_SERVICE_CONF_DIR = "/etc/systemd/system/jenkins-agent.service.d/"
-PPA_URI = "https://ppa.launchpadcontent.net/canonical-is-devops/jenkins-agent-charm/ubuntu/"
-PPA_DEB_SRC = "deb-https://ppa.launchpadcontent.net/canonical-is-devops/jenkins-agent-charm/ubuntu/-"  # noqa: E501 pylint: disable=line-too-long
-PPA_GPG_KEY_ID = "ad4196d35c25cdac"
 STARTUP_CHECK_TIMEOUT = 30
 STARTUP_CHECK_INTERVAL = 2
 JENKINS_HOME = Path("/var/lib/jenkins")
@@ -64,8 +57,9 @@ class JenkinsAgentService:
             state: The Jenkins agent state.
         """
         self.state = state
-        self._template_loader = jinja2.Environment(loader=jinja2.FileSystemLoader(searchpath="templates"))
-
+        self._template_loader = jinja2.Environment(
+            loader=jinja2.FileSystemLoader(searchpath="templates"), autoescape=True
+        )
 
     def _render_file(self, path: Path, content: str, mode: int) -> None:
         """Write a content rendered from a template to a file.
@@ -109,9 +103,13 @@ class JenkinsAgentService:
             PackageInstallError: if the package installation failed.
         """
         agent_service = Path("templates/jenkins_agent.service")
-        JENKINS_AGENT_SYSTEMD_PATH.write_text(agent_service.read_text(encoding="utf-8"), encoding="utf-8")
+        JENKINS_AGENT_SYSTEMD_PATH.write_text(
+            agent_service.read_text(encoding="utf-8"), encoding="utf-8"
+        )
         agent_script = Path("templates/jenkins_agent.sh")
-        self._render_file(JENKINS_AGENT_START_SCRIPT_PATH, agent_script.read_text(encoding="utf-8"), 755)
+        self._render_file(
+            JENKINS_AGENT_START_SCRIPT_PATH, agent_script.read_text(encoding="utf-8"), 755
+        )
 
         try:
             apt.add_package(REQUIRED_PACKAGES, update_cache=True)
