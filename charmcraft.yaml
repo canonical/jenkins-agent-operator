@@ -33,6 +33,7 @@ links:
 # 2024-11-12 Since there can only be one base definition, we would need to publish jammy and noble
 # manually until multiple charmcraft (for multiple bases) are supported by operator-workflows.
 base: ubuntu@24.04
+
 platforms:
   amd64:
   arm64:

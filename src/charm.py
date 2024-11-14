@@ -10,7 +10,6 @@ import logging
 import typing
 
 import ops
-from ops.main import main
 
 import agent_observer
 import service
@@ -118,4 +117,4 @@ class JenkinsAgentCharm(ops.CharmBase):
 
 
 if __name__ == "__main__":  # pragma: no cover
-    main(JenkinsAgentCharm)
+    ops.main(JenkinsAgentCharm)
