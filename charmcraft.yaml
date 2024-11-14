@@ -2,6 +2,9 @@
 # See LICENSE file for licensing details.
 
 name: jenkins-agent
+
+type: charm
+
 title: Jenkins agent
 summary: Jenkins agent machine charm
 description: |
@@ -27,17 +30,12 @@ links:
   source: https://github.com/canonical/jenkins-agent-operator
   website: https://charmhub.io/jenkins-agent
 
-type: charm
-
+# 2024-11-12 Since there can only be one base definition, we would need to publish jammy and noble
+# manually until multiple charmcraft (for multiple bases) are supported by operator-workflows.
 base: ubuntu@24.04
-
 platforms:
   amd64:
-    build-on: amd64
-    build-for: amd64
   arm64:
-    build-on: arm64
-    build-for: arm64
 
 config:
   options:
