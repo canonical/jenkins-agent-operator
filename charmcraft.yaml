@@ -34,6 +34,16 @@ links:
 # manually until multiple charmcraft (for multiple bases) are supported by operator-workflows.
 base: ubuntu@24.04
 
+parts:
+  charm:
+    plugin: charm
+  templates:
+    plugin: dump
+    source: ./templates
+    source-type: local
+    organize:
+      "*": "templates/"
+
 platforms:
   amd64:
   arm64:

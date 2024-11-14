@@ -70,7 +70,7 @@ async def jenkins_server_k8s_controller_fixture() -> typing.AsyncGenerator[Contr
     The controller is bootstrapped in "pre_run_script.sh".
     """
     controller = Controller()
-    await controller.connect("controller")
+    await controller.connect("microk8s")
     cloud = await controller.get_cloud()
     logger.info("Creating jenkins server controller on cloud %s", cloud)
 
