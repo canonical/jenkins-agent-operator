@@ -33,4 +33,6 @@ header:
     - 'trivy.yaml'
     - 'zap_rules.tsv'
     - 'lib/**'
+    - 'templates/Jenkinsfile'
+    - 'templates/jenkins_agent.service'
   comment: on-failure

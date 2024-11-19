@@ -1,9 +1,0 @@
-# Copyright 2024 Canonical Ltd.
-# See LICENSE file for licensing details.
-options:
-  jenkins_agent_labels:
-    type: string
-    default: ""
-    description: |
-      Comma-separated list of labels to be assigned to the agent in Jenkins. If not set it will
-      default to the agents hardware identifier, e.g.: 'x86_64'

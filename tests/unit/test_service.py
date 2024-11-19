@@ -22,24 +22,26 @@ from charm_state import AGENT_RELATION
 @pytest.mark.parametrize(
     "f,error_thrown",
     [
-        ("import_key", apt.GPGKeyError),
         ("add_package", apt.PackageError),
         ("add_package", apt.PackageNotFoundError),
     ],
 )
 def test_install_apt_package_gpg_key_error(
-    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, f, error_thrown
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, f, error_thrown
 ):
     """
     arrange: Harness with mocked apt module.
     act: run _on_install hook with methods raising different errors.
     assert: The charm should be in an error state.
     """
+    test_systemd_path = tmp_path / "systemd"
+    test_script_path = tmp_path / "script"
     harness.begin()
     charm: JenkinsAgentCharm = harness.charm
-    monkeypatch.setattr(apt, "RepositoryMapping", MagicMock(spec=apt.RepositoryMapping))
-    monkeypatch.setattr(apt, "import_key", MagicMock())
-    monkeypatch.setattr(apt, "update", MagicMock())
+    monkeypatch.setattr(service, "JENKINS_AGENT_SYSTEMD_PATH", test_systemd_path)
+    monkeypatch.setattr(service, "JENKINS_AGENT_START_SCRIPT_PATH", test_script_path)
+    monkeypatch.setattr(os, "chmod", MagicMock())
+    monkeypatch.setattr(os, "chown", MagicMock())
     monkeypatch.setattr(apt, "add_package", MagicMock())
     monkeypatch.setattr(apt, f, MagicMock(side_effect=[error_thrown]))
 
@@ -47,27 +49,27 @@ def test_install_apt_package_gpg_key_error(
         charm.on.install.emit()
 
 
-def test_on_install(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch):
+def test_on_install(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """
     arrange: Harness with mocked apt module.
     act: run initial hook.
     assert: The installation should pass without error and charm in blocked state.
     """
     apt_repository_mapping_mock = MagicMock()
-    apt_import_key_mock = MagicMock()
-    apt_update_mock = MagicMock()
     apt_add_package_mock = MagicMock()
     apt_repository_mapping_mock.__contains__.return_value = False
-    monkeypatch.setattr(apt, "RepositoryMapping", apt_repository_mapping_mock)
-    monkeypatch.setattr(apt, "import_key", apt_import_key_mock)
-    monkeypatch.setattr(apt, "update", apt_update_mock)
+    test_systemd_path = tmp_path / "systemd"
+    test_script_path = tmp_path / "script"
+    monkeypatch.setattr(service, "JENKINS_AGENT_SYSTEMD_PATH", test_systemd_path)
+    monkeypatch.setattr(service, "JENKINS_AGENT_START_SCRIPT_PATH", test_script_path)
+    monkeypatch.setattr(os, "chmod", MagicMock())
+    monkeypatch.setattr(os, "chown", MagicMock())
     monkeypatch.setattr(apt, "add_package", apt_add_package_mock)
 
     harness.begin_with_initial_hooks()
 
-    assert apt_add_package_mock.call_count == 2
-    assert apt_add_package_mock.call_args_list[0][0][0] == "openjdk-17-jre"
-    assert apt_add_package_mock.call_args_list[1][1]["package_names"] == service.APT_PACKAGE_NAME
+    assert apt_add_package_mock.call_count == 1
+    assert apt_add_package_mock.call_args_list[0][0][0] == ["openjdk-21-jre"]
 
     assert harness.charm.unit.status.name == ops.BlockedStatus.name
 

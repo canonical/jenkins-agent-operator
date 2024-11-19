@@ -15,7 +15,7 @@ echo "bootstrapping lxd juju controller"
 sg snap_microk8s -c "juju bootstrap localhost localhost"
 
 echo "bootstrapping secondary microk8s controller"
-sg snap_microk8s -c "juju bootstrap microk8s controller"
+sg snap_microk8s -c "juju bootstrap microk8s microk8s"
 
 echo "Switching to testing model"
 sg snap_microk8s -c "juju switch localhost"

@@ -15,7 +15,7 @@ from .conftest import NUM_AGENT_UNITS, assert_job_success
 
 logger = logging.getLogger()
 
-MICROK8S_CONTROLLER = "controller"
+MICROK8S_CONTROLLER = "microk8s"
 
 
 def rand_ascii(length: int) -> str:
