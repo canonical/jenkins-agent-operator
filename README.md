@@ -35,4 +35,4 @@ The Jenkins-agent Operator is a member of the Ubuntu family. It's an open source
 
 * [Issues](https://github.com/canonical/jenkins-agent-operator/issues) <!--Link to GitHub issues (if applicable)-->
 * [Contributing](https://github.com/canonical/jenkins-agent-operator/blob/main/CONTRIBUTING.md) <!--Link to any contribution guides--> 
-- [Matrix](https://matrix.to/#/#charmhub-charmdev:ubuntu.com)
+* [Matrix](https://matrix.to/#/#charmhub-charmdev:ubuntu.com)
