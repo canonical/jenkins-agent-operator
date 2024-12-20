@@ -27,11 +27,12 @@ See the [deploy and integrate machine agents](https://charmhub.io/jenkins-k8s/do
 ## Learn more
 
 - [Read more](https://charmhub.io/jenkins-agent/docs)
+- [Troubleshooting](https://matrix.to/#/#charmhub-charmdev:ubuntu.com)
 
 ## Project and community
 
 The Jenkins-agent Operator is a member of the Ubuntu family. It's an open source project that warmly welcomes community projects, contributions, suggestions, fixes and constructive feedback.
 
 * [Issues](https://github.com/canonical/jenkins-agent-operator/issues) <!--Link to GitHub issues (if applicable)-->
-* [Contributing](https://charmhub.io/jenkins-agent#contributing-to-this-documentation) <!--Link to any contribution guides--> 
+* [Contributing](https://github.com/canonical/jenkins-agent-operator/blob/main/CONTRIBUTING.md) <!--Link to any contribution guides--> 
 - [Matrix](https://matrix.to/#/#charmhub-charmdev:ubuntu.com)
