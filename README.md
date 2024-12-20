@@ -16,7 +16,7 @@ For information about how to deploy, integrate, and manage this charm, see the O
 
 ## Get started
 
-To begin, refer to the [Getting Started](https://charmhub.io/jenkins-agent/docs/tutorial-getting-started) tutorial for step-by-step instructions.
+To begin, refer to the [tutorial](https://charmhub.io/jenkins-agent/docs/tutorial-getting-started) for step-by-step instructions.
 
 ### Basic operations
 
