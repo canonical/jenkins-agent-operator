@@ -22,7 +22,7 @@ To begin, refer to the [Getting Started](https://charmhub.io/jenkins-agent/docs/
 
 #### Integrate with the Jenkins-k8S charm
 
-See the [deploy and integrate machine agents]([url](https://charmhub.io/jenkins-k8s/docs/tutorial-getting-started#deploy-and-integrate-machine-agents-optional)) section in the jenkins-k8s-operator documentation.
+See the [deploy and integrate machine agents](https://charmhub.io/jenkins-k8s/docs/tutorial-getting-started#deploy-and-integrate-machine-agents-optional) section in the jenkins-k8s-operator documentation.
 
 ## Learn more
 
