@@ -116,10 +116,11 @@ async def jenkins_server_fixture(jenkins_server_model: Model) -> Application:
 async def server_unit_ip_fixture(jenkins_server_model: Model, jenkins_server: Application):
     """Get Jenkins machine server charm unit IP."""
     status: FullStatus = await jenkins_server_model.get_status([jenkins_server.name])
+    app_status = status.applications[jenkins_server.name]
+    assert app_status is not None, f"Application {jenkins_server.name} not found in status"
     try:
-        unit_status: UnitStatus = next(
-            iter(status.applications[jenkins_server.name].units.values())
-        )
+        # mypy does not recognize that app_status is of type ApplicationStatus
+        unit_status: UnitStatus = next(iter(app_status.units.values()))  # type: ignore
         assert unit_status.address, "Invalid unit address"
         return unit_status.address
     except StopIteration as exc:
