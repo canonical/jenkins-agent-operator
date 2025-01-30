@@ -1,4 +1,4 @@
-# Copyright 2024 Canonical Ltd.
+# Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 
 """Fixtures for Jenkins-agent-k8s-operator charm integration tests."""
@@ -70,7 +70,7 @@ async def jenkins_server_k8s_controller_fixture() -> typing.AsyncGenerator[Contr
     The controller is bootstrapped in "pre_run_script.sh".
     """
     controller = Controller()
-    await controller.connect("controller")
+    await controller.connect("microk8s")
     cloud = await controller.get_cloud()
     logger.info("Creating jenkins server controller on cloud %s", cloud)
 
@@ -116,10 +116,9 @@ async def jenkins_server_fixture(jenkins_server_model: Model) -> Application:
 async def server_unit_ip_fixture(jenkins_server_model: Model, jenkins_server: Application):
     """Get Jenkins machine server charm unit IP."""
     status: FullStatus = await jenkins_server_model.get_status([jenkins_server.name])
+    jenkins_application = typing.cast(Application, status.applications[jenkins_server.name])
     try:
-        unit_status: UnitStatus = next(
-            iter(status.applications[jenkins_server.name].units.values())
-        )
+        unit_status: UnitStatus = next(iter(jenkins_application.units.values()))
         assert unit_status.address, "Invalid unit address"
         return unit_status.address
     except StopIteration as exc:

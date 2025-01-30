@@ -1257,7 +1257,7 @@ class RepositoryMapping(Mapping):
         if parsed:
             logger.info("parsed %d apt package repositories", len(parsed))
         else:
-            raise InvalidSourceError("all repository lines in '{}' were invalid!".format(filename))
+            logger.warning("all repository lines in '%s' were invalid!", filename)
 
     @staticmethod
     def _parse(line: str, filename: str) -> DebianRepository:

@@ -1,0 +1,14 @@
+[Unit]
+Description=Jenkins inbound agent
+StartLimitIntervalSec=infinity
+StartLimitBurst=60
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5s
+ExecStart=/usr/bin/jenkins-agent
+ExecStopPost=rm -rf /var/lib/jenkins/.ready
+
+[Install]
+WantedBy=multi-user.target

@@ -1,4 +1,4 @@
-# Copyright 2024 Canonical Ltd.
+# Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 
 """Integration tests for jenkins-agent-k8s-operator charm."""
@@ -15,7 +15,7 @@ from .conftest import NUM_AGENT_UNITS, assert_job_success
 
 logger = logging.getLogger()
 
-MICROK8S_CONTROLLER = "controller"
+MICROK8S_CONTROLLER = "microk8s"
 
 
 def rand_ascii(length: int) -> str:

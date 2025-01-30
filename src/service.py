@@ -1,4 +1,4 @@
-# Copyright 2024 Canonical Ltd.
+# Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 
 """The agent pebble service module."""
@@ -9,23 +9,21 @@ import pwd
 import time
 from pathlib import Path
 
+import jinja2
 from charms.operator_libs_linux.v0 import apt
 from charms.operator_libs_linux.v1 import systemd
-from jinja2 import Template
 
 from charm_state import State
 
 logger = logging.getLogger(__name__)
 AGENT_SERVICE_NAME = "jenkins-agent"
-APT_PACKAGE_VERSION = "1.0.10"
-APT_PACKAGE_NAME = f"jenkins-agent-{APT_PACKAGE_VERSION}"
+REQUIRED_PACKAGES = ["openjdk-21-jre"]
 SYSTEMD_SERVICE_CONF_DIR = "/etc/systemd/system/jenkins-agent.service.d/"
-PPA_URI = "https://ppa.launchpadcontent.net/canonical-is-devops/jenkins-agent-charm/ubuntu/"
-PPA_DEB_SRC = "deb-https://ppa.launchpadcontent.net/canonical-is-devops/jenkins-agent-charm/ubuntu/-"  # noqa: E501 pylint: disable=line-too-long
-PPA_GPG_KEY_ID = "ad4196d35c25cdac"
 STARTUP_CHECK_TIMEOUT = 30
 STARTUP_CHECK_INTERVAL = 2
 JENKINS_HOME = Path("/var/lib/jenkins")
+JENKINS_AGENT_SYSTEMD_PATH = Path("/etc/systemd/system/jenkins-agent.service")
+JENKINS_AGENT_START_SCRIPT_PATH = Path("/usr/bin/jenkins-agent")
 AGENT_READY_PATH = Path(JENKINS_HOME / ".ready")
 
 
@@ -59,6 +57,9 @@ class JenkinsAgentService:
             state: The Jenkins agent state.
         """
         self.state = state
+        self._template_loader = jinja2.Environment(
+            loader=jinja2.FileSystemLoader(searchpath="templates"), autoescape=True
+        )
 
     def _render_file(self, path: Path, content: str, mode: int) -> None:
         """Write a content rendered from a template to a file.
@@ -101,27 +102,19 @@ class JenkinsAgentService:
         Raises:
             PackageInstallError: if the package installation failed.
         """
+        agent_service = Path("templates/jenkins_agent.service")
+        JENKINS_AGENT_SYSTEMD_PATH.write_text(
+            agent_service.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        agent_script = Path("templates/jenkins_agent.sh")
+        self._render_file(
+            JENKINS_AGENT_START_SCRIPT_PATH, agent_script.read_text(encoding="utf-8"), 755
+        )
+
         try:
-            # Add ppa that hosts the jenkins-agent package
-            series = self.state.unit_data.series
-            repositories = apt.RepositoryMapping()
-            if f"{PPA_DEB_SRC}-{series}" not in repositories:
-                repositories.add(
-                    apt.DebianRepository(
-                        enabled=True,
-                        repotype="deb",
-                        uri=PPA_URI,
-                        release=series,
-                        groups=["main"],
-                    )
-                )
-                apt.import_key(PPA_GPG_KEY_ID)
-            # Install the necessary packages
-            apt.update()
-            apt.add_package("openjdk-17-jre")
-            apt.add_package(package_names=APT_PACKAGE_NAME)
-        except (apt.PackageError, apt.PackageNotFoundError, apt.GPGKeyError) as exc:
-            raise PackageInstallError("Error installing the agent package") from exc
+            apt.add_package(REQUIRED_PACKAGES, update_cache=True)
+        except (apt.PackageError, apt.PackageNotFoundError) as exc:
+            raise PackageInstallError("Error installing the Java package") from exc
 
     def restart(self) -> None:
         """Start the agent service.
@@ -134,8 +127,6 @@ class JenkinsAgentService:
         if not credentials:
             raise ServiceRestartError("Error starting the agent service: missing configuration")
 
-        with open("templates/jenkins_agent_env.conf.j2", "r", encoding="utf-8") as file:
-            template = Template(file.read())
         # fetch credentials and set them as environments
         environments = {
             "JENKINS_TOKEN": credentials.secret,
@@ -143,7 +134,8 @@ class JenkinsAgentService:
             "JENKINS_AGENT": self.state.agent_meta.name,
         }
         # render template file
-        rendered = template.render(environments=environments)
+        agent_env_conf_template = self._template_loader.get_template("jenkins_agent_env.conf.j2")
+        rendered = agent_env_conf_template.render(environments=environments)
         # Ensure that service conf directory exist
         config_dir = Path(SYSTEMD_SERVICE_CONF_DIR)
         config_dir.mkdir(parents=True, exist_ok=True)

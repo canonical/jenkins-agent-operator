@@ -1,4 +1,4 @@
-# Copyright 2024 Canonical Ltd.
+# Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 
 """The module for managing charm state."""
@@ -65,7 +65,7 @@ class UnitData(BaseModel):
         series: The base of the machine on which the charm is running.
     """
 
-    series: Literal["focal", "jammy"]
+    series: Literal["focal", "jammy", "noble"]
 
 
 class InvalidStateError(Exception):
