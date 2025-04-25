@@ -22,7 +22,7 @@ Container_Boundary(jenkins-agent, "Jenkins Agent") {
 The Jenkins agent is started via the systemd `jenkins_agent` service, installed by the charm.
 Upon receiving the `JENKINS_TOKEN`, `JENKINS_URL`, `JENKINS_AGENT` environment variables from the configuration, it starts the agent with these parameters. The agent will then connect to the Jenkins controller using these parameters.
 
-### charm
+### Charm
 
 This container is the main point of contact with the Juju controller. It communicates with Juju to
 run necessary charm code defined by the main `src/charm.py`. The source code is copied to the
