@@ -1,6 +1,6 @@
 # Charm architecture
 
-The Jenkins agent charm aims to provide Jenkins agents on top of Virtual Machines (VMs). The charm is designed to be flexible, allowing for easy configuration and management of Jenkins agents.
+The Jenkins agent charm aims to provide Jenkins agents on top of virtual machines (VMs). The charm is designed to be flexible, allowing for easy configuration and management of Jenkins agents.
 
 
 ## Services
