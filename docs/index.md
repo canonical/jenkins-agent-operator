@@ -46,3 +46,4 @@ Thinking about using the Jenkins-agent Operator for your next project? [Get in t
   1. [Integrations](reference/integrations.md)
 1. [Explanation](explanation)
   1. [Managing workload inside the charm](explanation/workload.md)
+  1. [Charm architecture](explanation/charm-architecture.md)
