@@ -65,7 +65,7 @@ class UnitData(BaseModel):
         series: The base of the machine on which the charm is running.
     """
 
-    series: Literal["focal", "jammy", "noble"]
+    series: Literal["jammy", "noble"]
 
 
 class InvalidStateError(Exception):
@@ -166,7 +166,7 @@ class State:
 
         # Load series information
         os_release: dict = dotenv_values("/etc/os-release")
-        unit_series = os_release.get("UBUNTU_CODENAME")
+        unit_series = os_release.get("UBUNTU_CODENAME", "")
         try:
             unit_data = UnitData(series=unit_series)
         except ValidationError as exc:

@@ -43,9 +43,7 @@ def model_fixture(ops_test: OpsTest) -> Model:
     return ops_test.model
 
 
-@pytest_asyncio.fixture(
-    scope="function", name="jenkins_agent_application", params=["focal", "jammy"]
-)
+@pytest_asyncio.fixture(scope="function", name="jenkins_agent_application", params=["jammy"])
 async def application_fixture(
     model: Model, charm: str, request: typing.Any
 ) -> typing.AsyncGenerator[Application, None]:
