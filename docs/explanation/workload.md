@@ -1,8 +1,8 @@
 # Managing workload inside the charm
-The core Jenkins agent workload requires 3 main parameters (JENKINS_URL, JENKINS_AGENT and JENKINS_SECRET) and is defined as a 2-step process:
+The core Jenkins agent workload requires three main parameters (`JENKINS_URL`, `JENKINS_AGENT` and `JENKINS_SECRET`) and is defined as a two-step process:
 
 1. Download the agent binary at JENKINS_URL/jnlpJars/agent.jar and store it in the agent’s home directory
-2. Run the agent binary with the following parameters to register the node with Jenkins
+2. Run the agent binary with the following parameters to register the node with Jenkins:
 ```
 /usr/bin/java -jar agent.jar \\
 -jnlpUrl "<jnlp-path-on-jenkins-server>" \\

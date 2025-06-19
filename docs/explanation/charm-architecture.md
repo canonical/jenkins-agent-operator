@@ -17,7 +17,7 @@ Container_Boundary(jenkins-agent, "Jenkins Agent") {
 }
 ```
 
-### Jenkins Agent
+### Jenkins agent
 
 The Jenkins agent is started via the systemd `jenkins_agent` service, installed by the charm.
 Upon receiving the `JENKINS_TOKEN`, `JENKINS_URL`, `JENKINS_AGENT` environment variables from the configuration, it starts the agent with these parameters. The agent will then connect to the Jenkins controller using these parameters.
@@ -39,26 +39,26 @@ context of a charm. Below is the list of observed events for `jenkins-agent char
 reacts to the event. For more information about the charm’s lifecycle in general, refer to the
 charm’s life [documentation](https://canonical-juju.readthedocs-hosted.com/en/3.6/user/reference/hook/).
 
-### install
+### `install`
 
 This event triggers the installation of the Jenkins agent service. It also installs the required dependency `openjdk-21-jre`.
 
-### start
+### `start`
 
 This event marks the charm’s state as started. See the documentation on the
 [start event](https://canonical-juju.readthedocs-hosted.com/en/3.6/user/reference/hook/#start).
 
-### config-changed
+### `config-changed`
 
-The jenkins-agent charm reacts to any configuration change and runs reconciliation between the current
+The `jenkins-agent` charm reacts to any configuration change and runs reconciliation between the current
 state and the desired state. See the list of
 [configurations](https://charmhub.io/jenkins-agent/configure).
 
-### agent-relation-{joined,changed,departed}
+### `agent-relation-{joined,changed,departed}`
 
-The jenkins-agent charm receives updates about the main Jenkins controller through the agent relation events. The Jenkins agent service is started or terminated accordingly.
+The `jenkins-agent` charm receives updates about the main Jenkins controller through the agent relation events. The Jenkins agent service is started or terminated accordingly.
 
-### upgrade-charm
+### `upgrade-charm`
 
 The `upgrade-charm` event is fired on the upgrade charm command `juju refresh jenkins-agent`. The command restarts the Jenkins agent service.
 
