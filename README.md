@@ -1,4 +1,7 @@
-# Jenkins-agent Operator
+<!-- vale Canonical.007-Headings-sentence-case = NO -->
+<!-- "Operator" is part of the name -->
+# Jenkins Agent Operator
+<!-- vale Canonical.007-Headings-sentence-case = YES -->
 
 [![CharmHub Badge](https://charmhub.io/jenkins-agent/badge.svg)](https://charmhub.io/jenkins-agent)
 [![Publish to edge](https://github.com/canonical/jenkins-agent-operator/actions/workflows/publish_charm.yaml/badge.svg)](https://github.com/canonical/jenkins-agent-operator/actions/workflows/publish_charm.yaml)
