@@ -7,7 +7,7 @@
 [![Publish to edge](https://github.com/canonical/jenkins-agent-operator/actions/workflows/publish_charm.yaml/badge.svg)](https://github.com/canonical/jenkins-agent-operator/actions/workflows/publish_charm.yaml)
 [![Promote charm](https://github.com/canonical/jenkins-agent-operator/actions/workflows/promote_charm.yaml/badge.svg)](https://github.com/canonical/jenkins-agent-operator/actions/workflows/promote_charm.yaml)
 
-A [Juju](https://juju.is/) [charm](https://juju.is/docs/olm/charmed-operators) deploying and managing Jenkins agents on machines. It is configurable to integrate with a Jenkins charm deployed in another Juju model.
+A [Juju](https://juju.is/) [charm](https://documentation.ubuntu.com/juju/3.6/reference/charm/) deploying and managing Jenkins agents on machines. It is configurable to integrate with a Jenkins charm deployed in another Juju model.
 
 This charm simplifies the deployment and operations of Jenkins Agent on VMs and bare metal.
 

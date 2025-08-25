@@ -1,4 +1,4 @@
-A [Juju](https://juju.is/) [charm](https://juju.is/docs/olm/charmed-operators) deploying and managing [Jenkins](https://www.jenkins.io/) agents on machines. It is configurable to integrate with a Jenkins charm deployed in another Juju model.
+A [Juju](https://juju.is/) [charm](https://documentation.ubuntu.com/juju/3.6/reference/charm/) deploying and managing [Jenkins](https://www.jenkins.io/) agents on machines. It is configurable to integrate with a Jenkins charm deployed in another Juju model.
 
 This charm simplifies initial deployment and operations of Jenkins Agent on VMs and bare metal. For DevOps or SRE teams this charm will make operating Jenkins agents simple and straightforward through Juju's clean interface. It will allow easy deployment into multiple environments for testing changes, and supports scaling out for enterprise deployments.
 
