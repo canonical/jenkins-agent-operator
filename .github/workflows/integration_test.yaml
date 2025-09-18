@@ -9,22 +9,16 @@ jobs:
       matrix:
         runtime: [ s390x, ppc64le, amd64, arm64 ]
 
-    runs-on: [ self-hosted, noble, "${{ matrix.runtime }}"]
     permissions:
       contents: read
       packages: write
 
-    steps:
-      - name: Setup tmate session
-        uses: canonical/action-tmate@main
-        with:
-          detached: true
-
-      - uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@main
-        with:
-          pre-run-script: |
-            -c "sudo microk8s config > ${GITHUB_WORKSPACE}/kube-config
-            chmod +x tests/integration/pre_run_script.sh
-            ./tests/integration/pre_run_script.sh"
-          juju-channel: 3.5/stable
-          channel: 1.29-strict/stable
+    uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@main
+    with:
+      pre-run-script: |
+        -c "sudo microk8s config > ${GITHUB_WORKSPACE}/kube-config
+        chmod +x tests/integration/pre_run_script.sh
+        ./tests/integration/pre_run_script.sh"
+      juju-channel: 3.5/stable
+      channel: 1.29-strict/stable
+      runs-on: ${{ matrix.runtime }}
