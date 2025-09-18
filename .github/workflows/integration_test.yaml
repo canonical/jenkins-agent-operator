@@ -15,6 +15,11 @@ jobs:
       packages: write
     
     steps:
+      - name: Setup tmate session
+        uses: canonical/action-tmate@main
+        with:
+          detached: true
+
       - uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@main
         with:
           pre-run-script: |
