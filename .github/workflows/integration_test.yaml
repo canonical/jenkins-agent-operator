@@ -24,5 +24,6 @@ jobs:
       builder-runner-label: ${{ matrix.runtime }}
       self-hosted-runner: true
       self-hosted-runner-arch: ${{ matrix.runtime }}
+      self-hosted-runner-label: edge
       tmate-debug: true
       tmate-timeout: 90
