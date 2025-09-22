@@ -3,12 +3,14 @@
 
 """Fixtures for Jenkins-agent-k8s-operator charm integration tests."""
 
+import json
 import logging
 import secrets
 import textwrap
 import typing
 
 import jenkinsapi.jenkins
+import jubilant
 import ops
 import pytest
 import pytest_asyncio
@@ -24,7 +26,7 @@ logger = logging.getLogger(__name__)
 NUM_AGENT_UNITS = 1
 
 
-@pytest_asyncio.fixture(scope="function", name="charm")
+@pytest_asyncio.fixture(scope="module", name="charm")
 async def charm_fixture(request: pytest.FixtureRequest, ops_test: OpsTest) -> str:
     """The path to charm."""
     charm = request.config.getoption("--charm-file")
@@ -36,15 +38,21 @@ async def charm_fixture(request: pytest.FixtureRequest, ops_test: OpsTest) -> st
     return charm
 
 
-@pytest.fixture(scope="function", name="model")
+@pytest.fixture(scope="module", name="model")
 def model_fixture(ops_test: OpsTest) -> Model:
     """The testing model."""
     assert ops_test.model
     return ops_test.model
 
 
+@pytest.fixture(scope="module", name="juju")
+def juju_fixture(model: Model):
+    """The Jubilant Juju object."""
+    return jubilant.Juju(model=model.name)
+
+
 @pytest_asyncio.fixture(
-    scope="function", name="jenkins_agent_application", params=["jammy", "noble"]
+    scope="module", name="jenkins_agent_application", params=["jammy", "noble"]
 )
 async def application_fixture(
     model: Model, charm: str, request: typing.Any
@@ -64,7 +72,7 @@ async def application_fixture(
     await model.remove_application(application.name, block_until_done=True, force=True)
 
 
-@pytest_asyncio.fixture(scope="function", name="k8s_controller")
+@pytest_asyncio.fixture(scope="module", name="k8s_controller")
 async def jenkins_server_k8s_controller_fixture() -> typing.AsyncGenerator[Controller, None]:
     """The juju controller on microk8s.
     The controller is bootstrapped in "pre_run_script.sh".
@@ -79,7 +87,7 @@ async def jenkins_server_k8s_controller_fixture() -> typing.AsyncGenerator[Contr
     await controller.disconnect()
 
 
-@pytest_asyncio.fixture(scope="function", name="jenkins_server_model")
+@pytest_asyncio.fixture(scope="module", name="jenkins_server_model")
 async def jenkins_server_model_fixture(
     k8s_controller: Controller,
 ) -> typing.AsyncGenerator[Model, None]:
@@ -97,7 +105,7 @@ async def jenkins_server_model_fixture(
     await model.disconnect()
 
 
-@pytest_asyncio.fixture(scope="function", name="jenkins_server")
+@pytest_asyncio.fixture(scope="module", name="jenkins_server")
 async def jenkins_server_fixture(jenkins_server_model: Model) -> Application:
     """The jenkins machine server."""
     jenkins = await jenkins_server_model.deploy("jenkins-k8s", channel="latest/edge")
@@ -112,7 +120,7 @@ async def jenkins_server_fixture(jenkins_server_model: Model) -> Application:
     return jenkins
 
 
-@pytest_asyncio.fixture(scope="function", name="server_unit_ip")
+@pytest_asyncio.fixture(scope="module", name="server_unit_ip")
 async def server_unit_ip_fixture(jenkins_server_model: Model, jenkins_server: Application):
     """Get Jenkins machine server charm unit IP."""
     status: FullStatus = await jenkins_server_model.get_status([jenkins_server.name])
@@ -125,13 +133,13 @@ async def server_unit_ip_fixture(jenkins_server_model: Model, jenkins_server: Ap
         raise StopIteration("Invalid unit status") from exc
 
 
-@pytest_asyncio.fixture(scope="function", name="web_address")
+@pytest_asyncio.fixture(scope="module", name="web_address")
 async def web_address_fixture(server_unit_ip: str):
     """Get Jenkins machine server charm web address."""
     return f"http://{server_unit_ip}:8080"
 
 
-@pytest_asyncio.fixture(scope="function", name="jenkins_client")
+@pytest_asyncio.fixture(scope="module", name="jenkins_client")
 async def jenkins_client_fixture(
     jenkins_server: Application,
     web_address: str,
@@ -207,3 +215,33 @@ def assert_job_success(
     queue_item.block_until_complete()
     build: jenkinsapi.build.Build = queue_item.get_build()
     assert build.get_status() == "SUCCESS"
+
+
+@pytest.fixture(scope="module", name="jenkins_server_any_charm")
+def jenkins_server_any_charm_fixture(juju: jubilant.Juju):
+    """The Jenkins server fixture picked up through any-charm."""
+    host_docker_url = ""
+    host_agent_secret = ""
+    any_charm_src_overwrite = {
+        "any_charm.py": textwrap.dedent(
+            f"""\
+        from any_charm_base import AnyCharmBase
+
+        AGENT_RELATION="provide-jenkins-agent-v0"
+
+        class AnyCharm(ops.CharmBase):
+            def _reconcile(self):
+                relation = self.model.get_relation(AGENT_RELATION)
+                if not relation:
+                    return
+                relation.data[self.model.unit].update({{"url": "{host_docker_url}"}})
+                for unit in relation.units:
+                    relation.data[self.model.unit].update(
+                        {{f"{{unit.name.replace('/', '-')}}": "{host_agent_secret}"}}
+                    )
+        """
+        ),
+    }
+    juju.deploy(
+        "any-charm", channel="beta", config={"src-overwrite": json.dumps(any_charm_src_overwrite)}
+    )

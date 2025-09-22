@@ -24,4 +24,5 @@ echo "Switching to testing model"
 sg snap_microk8s -c "juju switch localhost"
 
 echo "Starting Jenkins docker service"
-docker run -p 8080:8080 docker.io/jenkins/jenkins:lts-jdk17
+docker run -p 8080:8080 -p 50000:50000 --name jenkins --restart=on-failure docker.io/jenkins/jenkins:lts-jdk17
+docker exec <jenkins_container_id_or_name> cat /var/jenkins_home/secrets/initialAdminPassword

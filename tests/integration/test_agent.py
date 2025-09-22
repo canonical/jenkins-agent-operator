@@ -8,6 +8,8 @@ import secrets
 import string
 
 import jenkinsapi.jenkins
+import jubilant
+import pytest
 from juju.application import Application
 from juju.model import Model
 
@@ -30,6 +32,7 @@ def rand_ascii(length: int) -> str:
     return "".join(secrets.choice(string.ascii_lowercase) for _ in range(length))
 
 
+@pytest.mark.x64
 async def test_agent_relation(
     jenkins_server: Application,
     jenkins_agent_application: Application,
@@ -63,3 +66,19 @@ async def test_agent_relation(
     assert len(nodes.values()) == NUM_AGENT_UNITS + 1
 
     assert_job_success(jenkins_client, jenkins_agent_application.name, "machine")
+
+
+@pytest.mark.s390x
+@pytest.mark.ppc64le
+@pytest.mark.arm64
+async def test_agent_relation_anycharm(
+    juju: jubilant.Juju, jenkins_server_any_charm: str, application: Application
+):
+    """
+    arrange: given Jenkins runing on host port 8080 and an AnyCharm that provides Jenkins relation
+        data.
+    act: when the agent is related.
+    assert: the agent is registered.
+    """
+    juju.integrate(jenkins_server_any_charm, application.name)
+    juju.wait(jubilant.all_active)
