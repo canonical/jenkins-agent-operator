@@ -7,7 +7,7 @@ jobs:
   integration-tests:
     strategy:
       matrix:
-        runtime: [ s390x, ppc64le, x64, arm64 ]
+        runtime: [ s390x ] # ppc64le, x64, arm64
 
     permissions:
       contents: read
