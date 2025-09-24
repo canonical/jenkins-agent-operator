@@ -12,4 +12,15 @@ def pytest_addoption(parser: Parser):
     Args:
         parser: Pytest parser.
     """
-    parser.addoption("--charm-file", action="store")
+    parser.addoption(
+        "--charm-file",
+        action="store",
+        help="Path to Jenkins agent operator charm file.",
+    )
+    parser.addoption(
+        "--use-docker",
+        action="store_true",
+        default=False,
+        help="Enable testing with Jenkins server hosted on Docker. "
+        "Used for testing non-amd64 architectures",
+    )
