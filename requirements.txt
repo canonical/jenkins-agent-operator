@@ -1,5 +1,5 @@
 ops==3.2.0
 requests==2.32.5
-pydantic==1.10.23
+pydantic==1.10.24
 jinja2==3.1.6
 python-dotenv==1.1.1
