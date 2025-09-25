@@ -61,4 +61,4 @@ parts:
       done
 EOF
 
-cd any-charm && charmcraft pack && mv *.charm ../ && cd ..
+cd any-charm && charmcraft pack && mv *.charm ../ && cd .. && rm -rf any-charm
