@@ -77,9 +77,7 @@ def assert_job_success(
     assert build.get_status() == "SUCCESS"
 
 
-def test_agent_relation(
-    jenkins_client: jenkinsapi.jenkins.Jenkins, active_agent: str, juju: jubilant.Juju
-):
+def test_agent_relation(jenkins_client: jenkinsapi.jenkins.Jenkins, active_agent: str):
     """
     arrange: given a Jenkins server client and the registered agent.
     act: when a job is created.

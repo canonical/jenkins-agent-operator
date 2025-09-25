@@ -4,7 +4,6 @@
 """Fixtures for Jenkins-agent-k8s-operator charm integration tests."""
 import json
 import logging
-import os
 import platform
 import socket
 import textwrap
@@ -13,11 +12,10 @@ import typing
 from dataclasses import dataclass
 
 import docker
+import jenkinsapi
 import jubilant
 import pytest
 import pytest_asyncio
-
-from .types_ import DeployPlatform, JenkinsClient
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +162,8 @@ def _deploy_jenkins_server_docker():
     host_ip_addr = s.getsockname()[0]
     s.close()
 
-    return JenkinsServer(address=str(host_ip_addr), username="", password="")
+    # Ignore B106:hardcoded_password_funcarg, the Docker server is launched without user creds.
+    return JenkinsServer(address=str(host_ip_addr), username="", password="")  # nosec: B106
 
 
 @pytest.fixture(scope="module", name="jenkins_client")
@@ -176,18 +175,15 @@ def jenkins_client_fixture(juju: jubilant.Juju, microk8s_juju: jubilant.Juju, us
     if not use_docker:
         logger.info("Deploying Jenkins server via Juju: %s", system_attribs.processor)
         server = _deploy_jenkins_server_juju(agent_juju=juju, microk8s_juju=microk8s_juju)
-        return JenkinsClient(
+        return jenkinsapi.jenkins.Jenkins(
             baseurl=f"http://{server.address}:{server.port}",
             username=server.username,
             password=server.password,
-            deploy_platform=DeployPlatform.JUJU,
         )
 
     logger.info("Deploying Jenkins server via Docker: %s", system_attribs.processor)
     server = _deploy_jenkins_server_docker()
-    client = JenkinsClient(
-        baseurl=f"http://{server.address}:{server.port}", deploy_platform=DeployPlatform.DOCKER
-    )
+    client = jenkinsapi.jenkins.Jenkins(baseurl=f"http://{server.address}:{server.port}")
     client.safe_restart()
     return client
 
@@ -206,7 +202,7 @@ def jenkins_agent_application_fixture(juju: jubilant.Juju, charm: str, request: 
     return JENKINS_AGENT_APPLICATION_NAME
 
 
-def _register_agent_node(jenkins_client: JenkinsClient):
+def _register_agent_node(jenkins_client: jenkinsapi.jenkins.Jenkins):
     """Register agent node.
 
     Args:
@@ -215,7 +211,7 @@ def _register_agent_node(jenkins_client: JenkinsClient):
     agent_node_meta = {
         "num_executors": 1,
         "node_description": "Test JNLP Node on Docker",
-        "remote_fs": "/tmp",
+        "remote_fs": "/var/lib/jenkins",
         "labels": "machine",
         "exclusive": True,
     }
@@ -262,7 +258,7 @@ def _generate_any_charm_src_overwrite(jenkins_server_url: str, agent_node_secret
 
 @pytest.fixture(scope="module", name="jenkins_agent_requirer")
 def jenkins_agent_requirer_fixture(
-    use_docker: bool, jenkins_client: JenkinsClient, juju: jubilant.Juju
+    use_docker: bool, jenkins_client: jenkinsapi.jenkins.Jenkins, juju: jubilant.Juju
 ):
     """Jenkins agent requirer, the acting Jenkins server."""
     if not use_docker:
