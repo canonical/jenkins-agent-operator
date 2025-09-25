@@ -31,6 +31,7 @@ jobs:
 
     uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@fix/skip-check-allure
     with:
+      pre-run-script: tests/integration/setup_anycharm.sh
       juju-channel: 3.5/stable
       provider: lxd
       extra-arguments: "--use-docker"

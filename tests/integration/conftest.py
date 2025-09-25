@@ -4,6 +4,7 @@
 """Fixtures for Jenkins-agent-k8s-operator charm integration tests."""
 import json
 import logging
+import pathlib
 import platform
 import socket
 import textwrap
@@ -30,6 +31,21 @@ async def charm_fixture(request: pytest.FixtureRequest) -> str:
     charm = request.config.getoption("--charm-file")
     assert charm, "Charm file not provided"
     return charm
+
+
+@pytest_asyncio.fixture(scope="module", name="any_charm")
+async def any_charm_fixture(request: pytest.FixtureRequest) -> str:
+    """The path to charm."""
+    charm = request.config.getoption("--any-charm-file")
+    if charm:
+        return charm
+
+    any_charm_files = list(pathlib.Path(".").glob("any-charm*.charm"))
+    if not any_charm_files:
+        logger.info("No any-charm specified, using AnyCharm from CharmHub")
+        return ANY_CHARM_APPLICATION_NAME
+
+    return f"./{any_charm_files[0]}"
 
 
 @pytest.fixture(scope="module", name="keep_models")
@@ -204,7 +220,9 @@ def jenkins_client_fixture(juju: jubilant.Juju, microk8s_juju: jubilant.Juju, us
 
 
 @pytest.fixture(scope="module", name="jenkins_agent_application", params=["ubuntu@24.04"])
-def jenkins_agent_application_fixture(juju: jubilant.Juju, charm: str, request: typing.Any):
+def jenkins_agent_application_fixture(
+    juju: jubilant.Juju, charm: str, request: typing.Any, arch: str
+):
     """Build and deploy the charm."""
     juju.deploy(
         charm,
@@ -212,6 +230,7 @@ def jenkins_agent_application_fixture(juju: jubilant.Juju, charm: str, request: 
         num_units=1,
         base=request.param,
         config={"jenkins_agent_labels": "machine"},
+        constraints={"arch": arch},
     )
     juju.wait(jubilant.all_agents_idle, timeout=60 * 15)
     return JENKINS_AGENT_APPLICATION_NAME
@@ -273,7 +292,11 @@ def _generate_any_charm_src_overwrite(jenkins_server_url: str, agent_node_secret
 
 @pytest.fixture(scope="module", name="jenkins_agent_requirer")
 def jenkins_agent_requirer_fixture(
-    use_docker: bool, jenkins_client: jenkinsapi.jenkins.Jenkins, juju: jubilant.Juju, arch: str
+    use_docker: bool,
+    jenkins_client: jenkinsapi.jenkins.Jenkins,
+    juju: jubilant.Juju,
+    arch: str,
+    any_charm: str,
 ):
     """Jenkins agent requirer, the acting Jenkins server."""
     if not use_docker:
@@ -282,8 +305,9 @@ def jenkins_agent_requirer_fixture(
     # Register agent node for AnyCharm
     agent_secret = _register_agent_node(jenkins_client=jenkins_client)
     juju.deploy(
-        ANY_CHARM_APPLICATION_NAME,
-        channel="latest/beta",
+        any_charm,
+        app=ANY_CHARM_APPLICATION_NAME,
+        channel="latest/beta" if not any_charm.startswith("./") else None,
         config={
             "src-overwrite": json.dumps(
                 _generate_any_charm_src_overwrite(
