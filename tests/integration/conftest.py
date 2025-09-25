@@ -73,8 +73,8 @@ def arch_fixture():
     arch = platform.uname().processor
     if arch in ("aarch64", "arm64"):
         return "arm64"
-    if arch in ("ppc64le",):
-        return "ppc64le"
+    if arch in ("ppc64le", "ppc64el"):
+        return "ppc64el"
     if arch in ("x86_64", "amd64"):
         return "amd64"
     if arch in ("s390x",):
