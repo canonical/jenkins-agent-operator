@@ -51,6 +51,21 @@ def use_docker_fixture(request: pytest.FixtureRequest):
     return request.config.getoption("--use-docker")
 
 
+@pytest.fixture(scope="module", name="arch")
+def arch_fixture():
+    """Get the current machine architecture."""
+    arch = platform.uname().processor
+    if arch in ("aarch64", "arm64"):
+        return "arm64"
+    elif arch in ("ppc64le",):
+        return "ppc64le"
+    elif arch in ("x86_64", "amd64"):
+        return "amd64"
+    if arch in ("s390x",):
+        return "s390x"
+    raise NotImplementedError(f"Unimplemented arch {arch}")
+
+
 @pytest.fixture(scope="module", name="microk8s_juju")
 def microk8s_juju_fixture(use_docker: bool, keep_models: bool):
     """The Jubilant Juju object."""
@@ -258,7 +273,7 @@ def _generate_any_charm_src_overwrite(jenkins_server_url: str, agent_node_secret
 
 @pytest.fixture(scope="module", name="jenkins_agent_requirer")
 def jenkins_agent_requirer_fixture(
-    use_docker: bool, jenkins_client: jenkinsapi.jenkins.Jenkins, juju: jubilant.Juju
+    use_docker: bool, jenkins_client: jenkinsapi.jenkins.Jenkins, juju: jubilant.Juju, arch: str
 ):
     """Jenkins agent requirer, the acting Jenkins server."""
     if not use_docker:
@@ -277,6 +292,7 @@ def jenkins_agent_requirer_fixture(
                 )
             )
         },
+        constraints={"arch": arch},
     )
     juju.wait(jubilant.all_agents_idle, timeout=60 * 15)
     return ANY_CHARM_APPLICATION_NAME
