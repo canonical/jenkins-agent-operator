@@ -24,7 +24,7 @@ jobs:
   integration-tests-non-amd64:
     strategy:
       matrix:
-        runtime: [ s390x, arm64 ] # ppc64le is not available on Juju
+        runtime: [ s390x, arm64, ppc64le ]
     permissions:
       contents: read
       packages: write
