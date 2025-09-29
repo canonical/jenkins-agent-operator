@@ -22,14 +22,14 @@ jobs:
   integration-tests-non-amd64:
     strategy:
       matrix:
-        runtime: [ s390x, arm64, ppc64le ]
+        runtime: [s390x, arm64, ppc64le]
     permissions:
       contents: read
       packages: write
 
     uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@main
     with:
-      pre-run-script: tests/integration/setup_anycharm.sh
+      pre-run-script: tests/integration/setup_dependencies.sh
       juju-channel: 3/stable
       provider: lxd
       extra-arguments: "--use-docker"

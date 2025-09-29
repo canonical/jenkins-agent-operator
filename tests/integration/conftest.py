@@ -33,21 +33,6 @@ async def charm_fixture(request: pytest.FixtureRequest) -> str:
     return charm
 
 
-@pytest_asyncio.fixture(scope="module", name="any_charm")
-async def any_charm_fixture(request: pytest.FixtureRequest) -> str:
-    """The path to charm."""
-    charm = request.config.getoption("--any-charm-file")
-    if charm:
-        return charm
-
-    any_charm_files = list(pathlib.Path(".").glob("any-charm*.charm"))
-    if not any_charm_files:
-        logger.info("No any-charm specified, using AnyCharm from CharmHub")
-        return ANY_CHARM_APPLICATION_NAME
-
-    return f"./{any_charm_files[0]}"
-
-
 @pytest.fixture(scope="module", name="keep_models")
 def keep_models_fixture(request: pytest.FixtureRequest):
     """Whether to keep models after testing."""
@@ -296,7 +281,6 @@ def jenkins_agent_requirer_fixture(
     jenkins_client: jenkinsapi.jenkins.Jenkins,
     juju: jubilant.Juju,
     arch: str,
-    any_charm: str,
 ):
     """Jenkins agent requirer, the acting Jenkins server."""
     if not use_docker:
@@ -305,9 +289,8 @@ def jenkins_agent_requirer_fixture(
     # Register agent node for AnyCharm
     agent_secret = _register_agent_node(jenkins_client=jenkins_client)
     juju.deploy(
-        any_charm,
-        app=ANY_CHARM_APPLICATION_NAME,
-        channel="latest/beta" if not any_charm.startswith("./") else None,
+        ANY_CHARM_APPLICATION_NAME,
+        channel="latest/beta",
         config={
             "src-overwrite": json.dumps(
                 _generate_any_charm_src_overwrite(
