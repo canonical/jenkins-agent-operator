@@ -4,7 +4,6 @@
 """Fixtures for Jenkins-agent-k8s-operator charm integration tests."""
 import json
 import logging
-import pathlib
 import platform
 import socket
 import textwrap
