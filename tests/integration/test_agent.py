@@ -4,62 +4,92 @@
 """Integration tests for jenkins-agent-k8s-operator charm."""
 
 import logging
-import secrets
-import string
+import textwrap
 
 import jenkinsapi.jenkins
-from juju.application import Application
-from juju.model import Model
-
-from .conftest import NUM_AGENT_UNITS, assert_job_success
+import jubilant
+import pytest
 
 logger = logging.getLogger()
 
-MICROK8S_CONTROLLER = "microk8s"
 
-
-def rand_ascii(length: int) -> str:
-    """Generate random string containing only ascii characters.
+def _gen_test_job_xml(node_label: str):
+    """Generate a job xml with target node label.
 
     Args:
-        length: length of the generated string.
+        node_label: The node label to assign to job to.
 
     Returns:
-        Randomly generated ascii string of length {length}.
+        The job XML.
     """
-    return "".join(secrets.choice(string.ascii_lowercase) for _ in range(length))
+    return textwrap.dedent(
+        f"""
+        <project>
+            <actions/>
+            <description/>
+            <keepDependencies>false</keepDependencies>
+            <properties/>
+            <scm class="hudson.scm.NullSCM"/>
+            <assignedNode>{node_label}</assignedNode>
+            <canRoam>false</canRoam>
+            <disabled>false</disabled>
+            <blockBuildWhenDownstreamBuilding>false</blockBuildWhenDownstreamBuilding>
+            <blockBuildWhenUpstreamBuilding>false</blockBuildWhenUpstreamBuilding>
+            <triggers/>
+            <concurrentBuild>false</concurrentBuild>
+            <builders>
+                <hudson.tasks.Shell>
+                    <command>echo "hello world"</command>
+                    <configuredLocalRules/>
+                </hudson.tasks.Shell>
+            </builders>
+            <publishers/>
+            <buildWrappers/>
+        </project>
+        """
+    )
 
 
-async def test_agent_relation(
-    jenkins_server: Application,
-    jenkins_agent_application: Application,
-    jenkins_client: jenkinsapi.jenkins.Jenkins,
+@pytest.fixture(scope="module", name="active_agent")
+def active_agent_fixture(
+    jenkins_agent_requirer: str, jenkins_agent_application: str, juju: jubilant.Juju
 ):
-    """
-    arrange: given a cross controller cross model jenkins machine agent.
-    act: when the offer is created and relation is setup through the offer.
-    assert: the relation succeeds and agents become active.
-    """
-    agent_cmi_name: str = f"cmi-agent-{rand_ascii(4)}"
-    jenkins_server_model: Model = jenkins_server.model
-    logger.info("Creating offer %s:%s", jenkins_server.name, agent_cmi_name)
-    await jenkins_server_model.create_offer(f"{jenkins_server.name}:agent", agent_cmi_name)
-    # Machine model of the jenkins agent
-    model: Model = jenkins_agent_application.model
-    logger.info(
-        "cmr: controller:admin/%s.%s",
-        jenkins_server_model.name,
-        jenkins_server.name,
-    )
-    await model.relate(
-        f"{jenkins_agent_application.name}:agent",
-        f"{MICROK8S_CONTROLLER}:admin/{jenkins_server_model.name}.{agent_cmi_name}",
-    )
-    await model.wait_for_idle(status="active", timeout=1200)
+    """Agent related to server and active."""
+    juju.integrate(jenkins_agent_requirer, jenkins_agent_application)
+    juju.wait(jubilant.all_active, timeout=60 * 15)
+    return jenkins_agent_application
 
+
+def assert_job_success(
+    *, client: jenkinsapi.jenkins.Jenkins, agent_name: str, test_target_label: str
+):
+    """Assert that a job can be created and ran successfully.
+
+    Args:
+        client: The Jenkins API client.
+        agent_name: The registered Jenkins agent node to check.
+        test_target_label: The Jenkins agent node label.
+    """
+    job = client.create_job(agent_name, _gen_test_job_xml(test_target_label))
+    queue_item = job.invoke()
+    queue_item.block_until_complete()
+    build: jenkinsapi.build.Build = queue_item.get_build()
+    assert build.get_status() == "SUCCESS"
+
+
+def test_agent_relation(jenkins_client: jenkinsapi.jenkins.Jenkins, active_agent: str):
+    """
+    arrange: given a Jenkins server client and the registered agent.
+    act: when a job is created.
+    assert: the agent is able to run job to completion.
+    """
+    agent_name = f"{active_agent}-0"
     nodes = jenkins_client.get_nodes()
     assert all(node.is_online() for node in nodes.values())
-    # One of the nodes is the server node.
-    assert len(nodes.values()) == NUM_AGENT_UNITS + 1
+    assert any(node.name == agent_name for node in nodes.values())
 
-    assert_job_success(jenkins_client, jenkins_agent_application.name, "machine")
+    assert_job_success(
+        client=jenkins_client,
+        agent_name=agent_name,
+        test_target_label="machine",
+    )
