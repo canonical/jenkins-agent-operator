@@ -18,6 +18,8 @@ export TERM=xterm
 
 readonly JENKINS_HOME="/var/lib/jenkins"
 
+info "Installing on arch: $(uname -m)"
+
 if ! mkdir -p $JENKINS_HOME; then
     err "Error initializing the agent's home directory"
     exit 1
