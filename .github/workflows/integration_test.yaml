@@ -27,7 +27,7 @@ jobs:
       contents: read
       packages: write
 
-    uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@main
+    uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@feat/mattermost-ping
     with:
       juju-channel: 3/stable
       provider: lxd
@@ -38,4 +38,4 @@ jobs:
       self-hosted-runner-label: edge
       tmate-debug: true
       tmate-timeout: 90
-
+      mattermost-message: "@charlie4284 look here!"
