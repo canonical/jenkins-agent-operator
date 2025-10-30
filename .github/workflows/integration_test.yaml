@@ -36,3 +36,9 @@ jobs:
       self-hosted-runner: true
       self-hosted-runner-arch: ${{ matrix.runtime }}
       self-hosted-runner-label: edge
+  allure-report:
+    if: always() && !cancelled()
+    needs:
+      - integration-tests-amd64
+      - integration-tests-non-amd64
+    uses: canonical/operator-workflows/.github/workflows/allure_report.yaml@main
