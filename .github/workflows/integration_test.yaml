@@ -4,6 +4,11 @@ on:
   pull_request:
 
 jobs:
+  test-repo-secret-set:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print Hello World
+        run: echo "${{ secrets.MM_WEBHOOK_URL }}"
   integration-tests-amd64:
     permissions:
       contents: read
