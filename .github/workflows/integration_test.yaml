@@ -9,6 +9,7 @@ jobs:
       contents: read
       packages: write
 
+    secrets: inherit
     uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@main
     with:
       pre-run-script: |
@@ -27,7 +28,8 @@ jobs:
       contents: read
       packages: write
 
-    uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@main
+    secrets: inherit
+    uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@feat/mattermost-ping
     with:
       juju-channel: 3/stable
       provider: lxd
@@ -35,7 +37,10 @@ jobs:
       builder-runner-label: ${{ matrix.runtime }}
       self-hosted-runner: true
       self-hosted-runner-arch: ${{ matrix.runtime }}
-      self-hosted-runner-label: edge
+      self-hosted-runner-image: jammy
+      tmate-debug: true
+      tmate-timeout: 90
+      mattermost-message: "@charlie4284 look here!"
   allure-report:
     if: always() && !cancelled()
     needs:
