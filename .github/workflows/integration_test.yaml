@@ -37,7 +37,7 @@ jobs:
       builder-runner-label: ${{ matrix.runtime }}
       self-hosted-runner: true
       self-hosted-runner-arch: ${{ matrix.runtime }}
-      self-hosted-runner-label: jammy
+      self-hosted-runner-image: jammy
       tmate-debug: true
       tmate-timeout: 90
       mattermost-message: "@charlie4284 look here!"
