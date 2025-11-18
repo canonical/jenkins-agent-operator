@@ -4,11 +4,10 @@ on:
   pull_request:
 
 jobs:
-  integration-tests-amd64:
+  integration-tests:
     permissions:
       contents: read
       packages: write
-
     uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@main
     with:
       pre-run-script: |
@@ -26,7 +25,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-
     uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@main
     with:
       juju-channel: 3/stable
