@@ -37,6 +37,6 @@ jobs:
   allure-report:
     if: always() && !cancelled()
     needs:
-      - integration-tests-amd64
+      - integration-tests
       - integration-tests-non-amd64
     uses: canonical/operator-workflows/.github/workflows/allure_report.yaml@main
