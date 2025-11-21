@@ -1,0 +1,4 @@
+[32mINFO    [0m jubilant:_juju.py:313 cli: juju add-model --no-switch jubilant-c7f4b681
+[32mINFO    [0m tests.integration.conftest:conftest.py:188 system arch: aarch64
+[32mINFO    [0m tests.integration.conftest:conftest.py:199 Deploying Jenkins server via Docker: aarch64
+[31m[1mERROR   [0m jenkinsapi.jenkinsbase:jenkinsbase.py:85 Failed request at http://10.145.225.28:8080/api/python with params: {'tree': 'jobs[name,color,url]'} jobs[name,color,url]
