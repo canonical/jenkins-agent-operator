@@ -39,7 +39,7 @@ jobs:
       self-hosted-runner-arch: ${{ matrix.runtime }}
       self-hosted-runner-label: ${{ matrix.runtime }}
   allure-report:
-    if: ${{ (success() || failure()) && github.event_name == 'schedule' }}
+    if: ${{ !cancelled() && github.event_name == 'schedule' }}
     needs:
     - integration-tests
     - integration-tests-non-amd64
