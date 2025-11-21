@@ -39,4 +39,4 @@ jobs:
     needs:
       - integration-tests
       - integration-tests-non-amd64
-    uses: canonical/operator-workflows/.github/workflows/allure_report.yaml@main
+    uses: canonical/operator-workflows/.github/workflows/allure_report.yaml@debug-allure
