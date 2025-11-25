@@ -10,8 +10,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    uses: 
-      canonical/operator-workflows/.github/workflows/integration_test.yaml@main
+    uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@main
     with:
       pre-run-script: |
         -c "sudo microk8s config > ${GITHUB_WORKSPACE}/kube-config
@@ -21,6 +20,7 @@ jobs:
       self-hosted-runner: true
       self-hosted-runner-label: edge
 
+      with-uv: true
   integration-tests-non-amd64:
     strategy:
       matrix:
@@ -28,8 +28,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    uses: 
-      canonical/operator-workflows/.github/workflows/integration_test.yaml@main
+    uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@main
     with:
       juju-channel: 3/stable
       provider: lxd
@@ -38,6 +37,7 @@ jobs:
       self-hosted-runner: true
       self-hosted-runner-arch: ${{ matrix.runtime }}
       self-hosted-runner-label: ${{ matrix.runtime }}
+      with-uv: true
   allure-report:
     if: ${{ !cancelled() && github.event_name == 'schedule' }}
     needs:
