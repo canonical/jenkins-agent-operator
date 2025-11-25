@@ -3,15 +3,14 @@ name: Integration tests
 on:
   pull_request:
   schedule:
-  - cron: "0 15 * * SAT"
+    - cron: "0 15 * * SAT"
 
 jobs:
-  integration-tests:
+  integration-tests-amd64:
     permissions:
       contents: read
       packages: write
-    uses: 
-      canonical/operator-workflows/.github/workflows/integration_test.yaml@main
+    uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@main
     with:
       pre-run-script: |
         -c "sudo microk8s config > ${GITHUB_WORKSPACE}/kube-config
@@ -28,8 +27,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    uses: 
-      canonical/operator-workflows/.github/workflows/integration_test.yaml@main
+    uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@main
     with:
       juju-channel: 3/stable
       provider: lxd
@@ -38,9 +36,23 @@ jobs:
       self-hosted-runner: true
       self-hosted-runner-arch: ${{ matrix.runtime }}
       self-hosted-runner-label: ${{ matrix.runtime }}
+
   allure-report:
     if: ${{ !cancelled() && github.event_name == 'schedule' }}
     needs:
-    - integration-tests
-    - integration-tests-non-amd64
+      - integration-tests
+      - integration-tests-non-amd64
     uses: canonical/operator-workflows/.github/workflows/allure_report.yaml@main
+
+  integration-tests:
+    name: Required Integration Test Status Checks
+    runs-on: ubuntu-latest
+    needs:
+      - integration-tests-amd64
+      - integration-tests-non-amd64
+    if: always() && !cancelled()
+    timeout-minutes: 5
+    steps:
+      - run: |
+          [ '${{ needs.integration-tests-amd64.result }}' = 'success' ] || (echo integration-tests-amd64 failed && false)
+          [ '${{ needs.integration-tests-non-amd64.result }}' = 'success' ] || (echo integration-tests-non-amd64 failed && false)
