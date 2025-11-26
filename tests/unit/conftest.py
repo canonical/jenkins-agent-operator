@@ -2,7 +2,6 @@
 # See LICENSE file for licensing details.
 """Fixtures for jenkins-agent charm tests."""
 
-
 import secrets
 
 import pytest
@@ -22,8 +21,8 @@ def agent_relation_data_fixture() -> dict:
 def service_configuration_template_fixture(agent_relation_data: dict) -> str:
     """Mock service environment variables configuration for jenkins-agent."""
     return f'''[Service]
-Environment="JENKINS_TOKEN={agent_relation_data.get('jenkins-agent-0_secret')}"
-Environment="JENKINS_URL={agent_relation_data.get('url')}"
+Environment="JENKINS_TOKEN={agent_relation_data.get("jenkins-agent-0_secret")}"
+Environment="JENKINS_URL={agent_relation_data.get("url")}"
 Environment="JENKINS_AGENT=jenkins-agent-0"'''
 
 
