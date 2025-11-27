@@ -7,6 +7,7 @@
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import ops.testing
@@ -15,8 +16,10 @@ from charms.operator_libs_linux.v0 import apt
 from charms.operator_libs_linux.v1 import systemd
 
 import service
-from charm import JenkinsAgentCharm
 from charm_state import AGENT_RELATION
+
+if TYPE_CHECKING:
+    from charm import JenkinsAgentCharm
 
 
 @pytest.mark.parametrize(
@@ -45,7 +48,7 @@ def test_install_apt_package_gpg_key_error(
     monkeypatch.setattr(apt, "add_package", MagicMock())
     monkeypatch.setattr(apt, f, MagicMock(side_effect=[error_thrown]))
 
-    with pytest.raises(RuntimeError, match="Error installing the agent service"):
+    with pytest.raises(RuntimeError, match=r"Error installing the agent service"):
         charm.on.install.emit()
 
 
@@ -121,7 +124,7 @@ def test_restart_service_write_config_type_error(
 
     with pytest.raises(
         service.ServiceRestartError,
-        match="Error interacting with the filesystem when rendering configuration file",
+        match=r"Error interacting with the filesystem when rendering configuration file",
     ):
         charm.jenkins_agent_service.restart()
 
@@ -148,7 +151,7 @@ def test_restart_service_systemd_error(
 
     with pytest.raises(
         service.ServiceRestartError,
-        match=f"Error starting the agent service:\n{systemd_error_message}",
+        match=rf"Error starting the agent service:\n{systemd_error_message}",
     ):
         charm.jenkins_agent_service.restart()
 
