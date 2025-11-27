@@ -7,6 +7,7 @@
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import ops.testing
@@ -15,8 +16,10 @@ from charms.operator_libs_linux.v0 import apt
 from charms.operator_libs_linux.v1 import systemd
 
 import service
-from charm import JenkinsAgentCharm
 from charm_state import AGENT_RELATION
+
+if TYPE_CHECKING:
+    from charm import JenkinsAgentCharm
 
 
 @pytest.mark.parametrize(

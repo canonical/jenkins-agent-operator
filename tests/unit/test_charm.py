@@ -5,6 +5,7 @@
 
 """Test for charm hooks."""
 
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, PropertyMock
 
 import ops
@@ -14,7 +15,9 @@ from charms.operator_libs_linux.v1 import systemd
 
 import charm_state
 import service
-from charm import JenkinsAgentCharm
+
+if TYPE_CHECKING:
+    from charm import JenkinsAgentCharm
 
 
 def test___init___invalid_state(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch):

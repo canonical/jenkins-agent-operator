@@ -6,6 +6,7 @@
 """Test for agent relations."""
 
 import pathlib
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, PropertyMock
 
 import ops.testing
@@ -13,8 +14,10 @@ import pytest
 from charms.operator_libs_linux.v1 import systemd
 
 import service
-from charm import JenkinsAgentCharm
 from charm_state import AGENT_RELATION
+
+if TYPE_CHECKING:
+    from charm import JenkinsAgentCharm
 
 
 def test_agent_relation_joined(harness: ops.testing.Harness, agent_relation_data: dict):
@@ -84,7 +87,7 @@ def test_agent_relation_changed_service_restart_error(
     monkeypatch.setattr(
         charm.jenkins_agent_service, "restart", MagicMock(side_effect=service.ServiceRestartError)
     )
-    with pytest.raises(RuntimeError, match="Error restarting the agent service."):
+    with pytest.raises(RuntimeError, match=r"Error restarting the agent service\."):
         harness.charm.on.agent_relation_changed.emit(harness.model.get_relation(AGENT_RELATION))
 
 
