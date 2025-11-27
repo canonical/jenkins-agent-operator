@@ -131,7 +131,7 @@ def test_restart_agent_service_service_restart_error(
 
     charm: JenkinsAgentCharm = harness.charm
     monkeypatch.setattr(charm.state, "agent_relation_credentials", get_credentials_mock)
-    with pytest.raises(RuntimeError, match="Error restarting the agent service"):
+    with pytest.raises(RuntimeError, match=r"Error restarting the agent service"):
         charm.restart_agent_service()
 
 
@@ -147,7 +147,7 @@ def test_update_status_service_not_active(
     monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=False))
     harness.begin()
 
-    with pytest.raises(RuntimeError, match="jenkins-agent service is not running"):
+    with pytest.raises(RuntimeError, match=r"jenkins-agent service is not running"):
         harness.charm.on.update_status.emit()
 
 
