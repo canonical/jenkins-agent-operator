@@ -36,7 +36,10 @@ base: ubuntu@24.04
 
 parts:
   charm:
-    plugin: charm
+    source: .
+    plugin: uv
+    build-snaps:
+    - astral-uv
   templates:
     plugin: dump
     source: ./templates
@@ -44,6 +47,11 @@ parts:
     organize:
       "*": "templates/"
 
+  dump:
+    plugin: templates
+    source: .
+    stage:
+    - templates
 platforms:
   amd64:
   arm64:

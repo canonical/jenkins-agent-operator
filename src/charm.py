@@ -5,7 +5,6 @@
 
 """Jenkins agent charm."""
 
-
 import logging
 import typing
 

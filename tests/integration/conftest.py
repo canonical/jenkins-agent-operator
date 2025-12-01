@@ -2,6 +2,7 @@
 # See LICENSE file for licensing details.
 
 """Fixtures for Jenkins-agent-k8s-operator charm integration tests."""
+
 import json
 import logging
 import platform
@@ -236,7 +237,7 @@ def _register_agent_node(jenkins_client: jenkinsapi.jenkins.Jenkins):
     node_name = f"{JENKINS_AGENT_APPLICATION_NAME}-0"
     jenkins_client.nodes.create_node(node_name, agent_node_meta)
     script = (
-        f"println(jenkins.model.Jenkins.getInstance()" f'.getComputer("{node_name}").getJnlpMac())'
+        f'println(jenkins.model.Jenkins.getInstance().getComputer("{node_name}").getJnlpMac())'
     )
     secret = jenkins_client.run_groovy_script(script).strip()
     return secret
