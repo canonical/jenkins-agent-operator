@@ -44,7 +44,7 @@ jobs:
       - integration-tests-non-amd64
     uses: canonical/operator-workflows/.github/workflows/allure_report.yaml@main
 
-  integration-tests:
+  integration tests:
     name: Required Integration Test Status Checks
     runs-on: ubuntu-latest
     needs:
