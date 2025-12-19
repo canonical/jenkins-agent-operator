@@ -3,7 +3,6 @@
 
 """The agent relation observer module."""
 
-
 import logging
 
 import ops

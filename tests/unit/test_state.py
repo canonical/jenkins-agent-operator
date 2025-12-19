@@ -6,6 +6,7 @@
 """Test for charm state."""
 
 import os
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import ops
@@ -13,7 +14,9 @@ import ops.testing
 import pytest
 
 import charm_state
-from charm import JenkinsAgentCharm
+
+if TYPE_CHECKING:
+    from charm import JenkinsAgentCharm
 
 
 def test_from_charm_invalid_metadata(
@@ -28,5 +31,5 @@ def test_from_charm_invalid_metadata(
     harness.begin()
     charm: JenkinsAgentCharm = harness.charm
 
-    with pytest.raises(charm_state.InvalidStateError, match="Invalid executor state."):
+    with pytest.raises(charm_state.InvalidStateError, match=r"Invalid executor state\."):
         charm_state.State.from_charm(charm=charm)

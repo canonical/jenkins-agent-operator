@@ -36,7 +36,10 @@ base: ubuntu@24.04
 
 parts:
   charm:
-    plugin: charm
+    source: .
+    plugin: uv
+    build-snaps:
+    - astral-uv
   templates:
     plugin: dump
     source: ./templates
