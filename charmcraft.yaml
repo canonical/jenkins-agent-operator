@@ -47,11 +47,6 @@ parts:
     organize:
       "*": "templates/"
 
-  dump:
-    plugin: templates
-    source: .
-    stage:
-    - templates
 platforms:
   amd64:
   arm64:

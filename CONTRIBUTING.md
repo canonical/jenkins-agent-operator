@@ -77,7 +77,7 @@ your pull request must provide the following details:
   - The [contributing guide](https://github.com/canonical/is-charms-contributing-guide) was applied
   - The changes are compliant with [ISD054 - Managing Charm Complexity](https://discourse.charmhub.io/t/specification-isd014-managing-charm-complexity/11619)
   - The documentation is updated
-  - The PR is tagged with appropriate label (trivial, senior-review-required)
+  - The PR is tagged with appropriate label (`trivial`, `senior-review-required`)
   - The changelog has been updated
 
 ### Signing commits
