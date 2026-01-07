@@ -20,6 +20,7 @@ jobs:
       self-hosted-runner: true
       self-hosted-runner-label: edge
 
+      with-uv: true
   integration-tests-non-amd64:
     strategy:
       matrix:
@@ -36,7 +37,7 @@ jobs:
       self-hosted-runner: true
       self-hosted-runner-arch: ${{ matrix.runtime }}
       self-hosted-runner-label: ${{ matrix.runtime }}
-
+      with-uv: true
   allure-report:
     if: ${{ !cancelled() && github.event_name == 'schedule' }}
     needs:
