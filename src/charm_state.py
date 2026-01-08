@@ -3,7 +3,6 @@
 
 """The module for managing charm state."""
 
-
 import logging
 import os
 import typing
