@@ -30,10 +30,6 @@ links:
   source: https://github.com/canonical/jenkins-agent-operator
   website: https://charmhub.io/jenkins-agent
 
-# 2024-11-12 Since there can only be one base definition, we would need to publish jammy and noble
-# manually until multiple charmcraft (for multiple bases) are supported by operator-workflows.
-base: ubuntu@24.04
-
 parts:
   charm:
     source: .
@@ -48,10 +44,14 @@ parts:
       "*": "templates/"
 
 platforms:
-  amd64:
-  arm64:
-  s390x:
-  ppc64el:
+  ubuntu@24.04:amd64:
+  ubuntu@22.04:amd64:
+  ubuntu@24.04:arm64:
+  ubuntu@22.04:arm64:
+  ubuntu@24.04:s390x:
+  ubuntu@22.04:s390x:
+  ubuntu@24.04:ppc64el:
+  ubuntu@22.04:ppc64el:
 
 config:
   options:
