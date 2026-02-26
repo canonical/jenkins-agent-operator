@@ -61,7 +61,7 @@ integration = [
   "jenkinsapi>=0.3,<1",
   "jubilant",
   "juju>=3,<4",
-  "protobuf==6.32.1",
+  "protobuf==6.33.5",
   "pytest",
   "pytest-asyncio",
   "pytest-operator",
