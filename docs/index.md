@@ -38,6 +38,7 @@ Thinking about using the Jenkins-agent Operator for your next project? [Get in t
   1. [Getting Started](tutorial/getting-started.md)
 1. [How to](how-to)
   1. [Configure agent node label](how-to/configure-agent-node-label.md)
+  1. [Upgrade](how-to/upgrade.md)
 1. [Reference](reference)
   1. [Actions](reference/actions.md)
   1. [Charm architecture](reference/charm-architecture.md)
