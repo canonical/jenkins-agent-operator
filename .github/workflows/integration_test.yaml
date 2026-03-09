@@ -10,7 +10,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@main
+    uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@feat/charm-publish-detect-multi-job
     with:
       pre-run-script: |
         -c "sudo microk8s config > ${GITHUB_WORKSPACE}/kube-config
@@ -28,7 +28,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@main
+    uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@feat/charm-publish-detect-multi-job
     with:
       juju-channel: 3/stable
       provider: lxd
@@ -43,7 +43,7 @@ jobs:
     needs:
       - integration-tests
       - integration-tests-non-amd64
-    uses: canonical/operator-workflows/.github/workflows/allure_report.yaml@main
+    uses: canonical/operator-workflows/.github/workflows/allure_report.yaml@feat/charm-publish-detect-multi-job
 
   integration-tests:
     name: Required Integration Test Status Checks
