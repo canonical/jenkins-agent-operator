@@ -9,7 +9,7 @@ on:
 
 jobs:
   publish-to-edge:
-    uses: canonical/operator-workflows/.github/workflows/publish_charm.yaml@feat/charm-publish-detect-multi-job
+    uses: canonical/operator-workflows/.github/workflows/publish_charm.yaml@fix/deduplicate-artefacts
     secrets: inherit
     with:
       channel: latest/edge
