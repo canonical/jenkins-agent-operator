@@ -105,7 +105,7 @@ def _get_juju_jenkins_server_password(juju: jubilant.Juju, application: str):
 
 def _deploy_jenkins_server_juju(agent_juju: jubilant.Juju, microk8s_juju: jubilant.Juju):
     """Deploy Jenkins k8s server as agent relation provider."""
-    microk8s_juju.deploy(JENKINS_APPLICATION_NAME, channel="latest/edge")
+    microk8s_juju.deploy(JENKINS_APPLICATION_NAME, channel="latest/edge", log=False)
     microk8s_juju.wait(jubilant.all_active)
     unit_status = (
         microk8s_juju.status()
@@ -216,6 +216,7 @@ def jenkins_agent_application_fixture(
         base=request.param,
         config={"jenkins_agent_labels": "machine"},
         constraints={"arch": arch},
+        log=False,
     )
     juju.wait(jubilant.all_agents_idle, timeout=60 * 15)
     return JENKINS_AGENT_APPLICATION_NAME
@@ -300,6 +301,7 @@ def jenkins_agent_requirer_fixture(
             )
         },
         constraints={"arch": arch},
+        log=False,
     )
     juju.wait(jubilant.all_agents_idle, timeout=60 * 15)
     return ANY_CHARM_APPLICATION_NAME
