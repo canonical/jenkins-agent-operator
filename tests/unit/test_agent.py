@@ -91,26 +91,40 @@ def test_agent_relation_changed_service_restart_error(
         harness.charm.on.agent_relation_changed.emit(harness.model.get_relation(AGENT_RELATION))
 
 
+@pytest.mark.parametrize(
+    "creds_changed,expect_restart",
+    [
+        pytest.param(False, 0, id="no_change"),
+        pytest.param(True, 1, id="credentials_changed"),
+    ],
+)
 def test_agent_relation_changed_service_already_active(
     harness_with_agent_relation: ops.testing.Harness,
     monkeypatch: pytest.MonkeyPatch,
+    creds_changed: bool,
+    expect_restart: int,
 ):
     """
     arrange: initialized jenkins-agent charm related to jenkins-k8s charm with relation data.
-    act: Trigger _on_agent_relation_changed hook when the service is already up.
-    assert: The charm skips restarting the agent service.
+    act: Trigger _on_agent_relation_changed hook when the service is already active.
+    assert: The charm restarts only when credentials have changed.
     """
     service_restart_mock = MagicMock()
     service_is_active_mock = PropertyMock(return_value=True)
+    credentials_changed_mock = MagicMock(return_value=creds_changed)
     monkeypatch.setattr(service.JenkinsAgentService, "restart", service_restart_mock)
     monkeypatch.setattr(service.JenkinsAgentService, "is_active", service_is_active_mock)
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "credentials_changed", credentials_changed_mock
+    )
     harness = harness_with_agent_relation
     harness.begin()
 
     harness.charm.on.agent_relation_changed.emit(harness.model.get_relation(AGENT_RELATION))
 
     assert service_is_active_mock.call_count == 1
-    assert service_restart_mock.call_count == 0
+    assert credentials_changed_mock.call_count == 1
+    assert service_restart_mock.call_count == expect_restart
 
 
 def test_agent_relation_departed_service_stop_error(

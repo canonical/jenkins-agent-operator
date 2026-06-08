@@ -5,6 +5,8 @@
 
 """Test for service interaction."""
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -169,3 +171,83 @@ def test_service_is_active_systemd_error(
     charm: JenkinsAgentCharm = harness.charm
 
     assert not charm.jenkins_agent_service.is_active
+
+
+def test_parse_systemd_env():
+    """
+    arrange: A systemd override.conf with Environment directives.
+    act: Parse the content.
+    assert: The correct key-value pairs are extracted.
+    """
+    content = (
+        "[Service]\n"
+        'Environment="JENKINS_TOKEN=abc123"\n'
+        'Environment="JENKINS_URL=http://10.1.69.130:8080"\n'
+        'Environment="JENKINS_AGENT=jenkins-agent-k8s-0"'
+    )
+    result = service._parse_systemd_env(content)
+    assert result == {
+        "JENKINS_TOKEN": "abc123",
+        "JENKINS_URL": "http://10.1.69.130:8080",
+        "JENKINS_AGENT": "jenkins-agent-k8s-0",
+    }
+
+
+@pytest.mark.parametrize(
+    "override_content,cred_url,cred_secret,expected",
+    [
+        pytest.param(None, "http://new", "s", True, id="no_override_file"),
+        pytest.param(
+            "[Service]\n"
+            'Environment="JENKINS_TOKEN=secret123"\n'
+            'Environment="JENKINS_URL=http://10.1.69.130:8080"\n'
+            'Environment="JENKINS_AGENT=jenkins-agent-0"',
+            "http://10.1.69.130:8080",
+            "secret123",
+            False,
+            id="same_credentials",
+        ),
+        pytest.param(
+            "[Service]\n"
+            'Environment="JENKINS_TOKEN=secret123"\n'
+            'Environment="JENKINS_URL=http://10.1.69.130:8080"\n'
+            'Environment="JENKINS_AGENT=jenkins-agent-0"',
+            "http://10.1.69.153:8080",
+            "secret123",
+            True,
+            id="url_differs",
+        ),
+    ],
+)
+def test_credentials_changed(
+    harness: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    override_content: str | None,
+    cred_url: str,
+    cred_secret: str,
+    expected: bool,
+):
+    """
+    arrange: A service with or without an override.conf file.
+    act: Check if credentials changed against given values.
+    assert: Returns expected bool depending on file state and content.
+    """
+    config_dir = tmp_path / "override"
+    if override_content is not None:
+        config_dir.mkdir()
+        (config_dir / "override.conf").write_text(override_content)
+    monkeypatch.setattr(service, "SYSTEMD_SERVICE_CONF_DIR", str(config_dir))
+    harness.add_relation(
+        AGENT_RELATION,
+        "jenkins-k8s",
+        unit_data={"url": cred_url, "jenkins-agent-0_secret": cred_secret},
+    )
+    harness.begin()
+    charm: JenkinsAgentCharm = harness.charm
+    from charm_state import Credentials
+
+    result = charm.jenkins_agent_service.credentials_changed(
+        Credentials(address=cred_url, secret=cred_secret)
+    )
+    assert result is expected

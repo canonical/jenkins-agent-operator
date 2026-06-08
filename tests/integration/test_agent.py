@@ -5,12 +5,15 @@
 
 import logging
 import textwrap
+import time
 
 import jenkinsapi.jenkins
 import jubilant
 import pytest
 
 logger = logging.getLogger()
+
+JENKINS_APPLICATION_NAME = "jenkins-k8s"
 
 
 def _gen_test_job_xml(node_label: str):
@@ -93,3 +96,87 @@ def test_agent_relation(jenkins_client: jenkinsapi.jenkins.Jenkins, active_agent
         agent_name=agent_name,
         test_target_label="machine",
     )
+
+
+def _wait_for_agent_online(
+    jenkins_client: jenkinsapi.jenkins.Jenkins, agent_name: str, timeout: int = 600
+) -> bool:
+    """Wait for a Jenkins agent to come online.
+
+    Args:
+        jenkins_client: The Jenkins API client.
+        agent_name: The agent node name.
+        timeout: Maximum wait time in seconds.
+
+    Returns:
+        True if the agent came online within the timeout.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            node = jenkins_client.get_node(agent_name)
+            if node.is_online():
+                return True
+        except Exception:  # nosec B110
+            pass
+        time.sleep(10)
+    return False
+
+
+def test_agent_reconnects_after_server_refresh(
+    jenkins_client: jenkinsapi.jenkins.Jenkins,
+    active_agent: str,
+    juju: jubilant.Juju,
+    microk8s_juju: jubilant.Juju,
+    use_docker: bool,
+):
+    """
+    arrange: given a Jenkins server and registered agent that is active and online.
+    act: when the Jenkins server charm is refreshed (simulating pod restart / URL change).
+    assert: the agent reconnects and comes back online without manual intervention.
+    """
+    if use_docker:
+        pytest.skip("Server refresh test requires Juju-deployed Jenkins server")
+
+    agent_name = f"{active_agent}-0"
+
+    # Verify agent is initially online.
+    node = jenkins_client.get_node(agent_name)
+    assert node.is_online(), f"Agent {agent_name} should be online before refresh"
+
+    # Refresh the Jenkins server charm to trigger pod restart and IP change.
+    logger.info("Refreshing Jenkins server charm to trigger pod restart...")
+    microk8s_juju.cli("refresh", JENKINS_APPLICATION_NAME, "--channel", "latest/edge")
+    microk8s_juju.wait(jubilant.all_agents_idle, timeout=60 * 15)
+    microk8s_juju.wait(jubilant.all_active, timeout=60 * 15)
+
+    # The server may have a new IP. Re-create the client with the new address.
+    unit_status = (
+        microk8s_juju.status()
+        .get_units(JENKINS_APPLICATION_NAME)
+        .get(f"{JENKINS_APPLICATION_NAME}/0")
+    )
+    assert unit_status, "Jenkins server unit not found after refresh"
+    new_address = unit_status.address
+    logger.info("Jenkins server new address after refresh: %s", new_address)
+
+    result = microk8s_juju.run(f"{JENKINS_APPLICATION_NAME}/0", "get-admin-password")
+    password = result.results.get("password", "")
+    assert password, "Failed to get admin password after refresh"
+
+    new_client = jenkinsapi.jenkins.Jenkins(
+        baseurl=f"http://{new_address}:8080",
+        username="admin",
+        password=password,
+        timeout=60,
+    )
+
+    # Wait for agent to reconnect (the charm should detect the URL change and restart).
+    juju.wait(jubilant.all_agents_idle, timeout=60 * 5)
+    assert _wait_for_agent_online(new_client, agent_name, timeout=600), (
+        f"Agent {agent_name} did not reconnect after server refresh within 10 minutes"
+    )
+
+    # Verify agent is functional by checking it's online.
+    node = new_client.get_node(agent_name)
+    assert node.is_online(), f"Agent {agent_name} should be online after reconnection"

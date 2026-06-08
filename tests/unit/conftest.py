@@ -3,6 +3,7 @@
 """Fixtures for jenkins-agent charm tests."""
 
 import secrets
+from unittest.mock import patch
 
 import pytest
 from ops.testing import Harness
@@ -24,6 +25,16 @@ def service_configuration_template_fixture(agent_relation_data: dict) -> str:
 Environment="JENKINS_TOKEN={agent_relation_data.get("jenkins-agent-0_secret")}"
 Environment="JENKINS_URL={agent_relation_data.get("url")}"
 Environment="JENKINS_AGENT=jenkins-agent-0"'''
+
+
+@pytest.fixture(autouse=True)
+def mock_os_release():
+    """Mock /etc/os-release so State.from_charm works on any platform."""
+    with patch(
+        "charm_state.dotenv_values",
+        return_value={"UBUNTU_CODENAME": "noble"},
+    ):
+        yield
 
 
 @pytest.fixture(scope="function", name="harness")
