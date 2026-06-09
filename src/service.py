@@ -6,14 +6,16 @@
 import logging
 import os
 import pwd
+import re
 import time
+import typing
 from pathlib import Path
 
 import jinja2
 from charms.operator_libs_linux.v0 import apt
 from charms.operator_libs_linux.v1 import systemd
 
-from charm_state import State
+from charm_state import Credentials, State
 
 logger = logging.getLogger(__name__)
 AGENT_SERVICE_NAME = "jenkins-agent"
@@ -25,6 +27,26 @@ JENKINS_HOME = Path("/var/lib/jenkins")
 JENKINS_AGENT_SYSTEMD_PATH = Path("/etc/systemd/system/jenkins-agent.service")
 JENKINS_AGENT_START_SCRIPT_PATH = Path("/usr/bin/jenkins-agent")
 AGENT_READY_PATH = Path(JENKINS_HOME / ".ready")
+
+# Pattern for systemd Environment="KEY=VALUE" lines.
+_SYSTEMD_ENV_PATTERN = re.compile(r'^Environment="([^=]+)=(.*)"$')
+
+
+def _parse_systemd_env(content: str) -> typing.Dict[str, str]:
+    """Parse Environment directives from a systemd override.conf file.
+
+    Args:
+        content: The file content to parse.
+
+    Returns:
+        A dictionary of environment variable key-value pairs.
+    """
+    env: typing.Dict[str, str] = {}
+    for line in content.splitlines():
+        match = _SYSTEMD_ENV_PATTERN.match(line.strip())
+        if match:
+            env[match.group(1)] = match.group(2)
+    return env
 
 
 class PackageInstallError(Exception):
@@ -95,6 +117,24 @@ class JenkinsAgentService:
         except SystemError as exc:
             logger.error("Failed to call systemctl:\n%s", exc)
             return False
+
+    def credentials_changed(self, credentials: Credentials) -> bool:
+        """Check whether the current service credentials differ from the given ones.
+
+        Args:
+            credentials: The credentials to compare against the running configuration.
+
+        Returns:
+            True if the credentials have changed, False otherwise.
+        """
+        config_file = Path(f"{SYSTEMD_SERVICE_CONF_DIR}/override.conf")
+        if not config_file.exists():
+            return True
+        current_env = _parse_systemd_env(config_file.read_text())
+        return (
+            current_env.get("JENKINS_URL") != credentials.address
+            or current_env.get("JENKINS_TOKEN") != credentials.secret
+        )
 
     def install(self) -> None:
         """Install and set up the jenkins agent apt package.

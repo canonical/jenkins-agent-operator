@@ -63,17 +63,21 @@ class Observer(ops.Object):
         Raises:
             RuntimeError: when the service fails to properly start.
         """
-        # Check if the jenkins agent service has started and set agent ready.
-        # This is to prevent relation data from other units to trigger a service restart.
-        if self.jenkins_agent_service.is_active:
-            logger.warning("Given agent already registered. Skipping.")
-            return
-
         # If relation data is not yet available to this unit, set its status to waiting
         if not self.state.agent_relation_credentials:
             self.charm.unit.status = ops.WaitingStatus("Waiting for complete relation data.")
             logger.info("Waiting for complete relation data.")
             return
+
+        # If the service is already active, check whether the server URL has changed.
+        # A Jenkins server pod restart assigns a new IP, requiring agents to reconnect.
+        if self.jenkins_agent_service.is_active:
+            if not self.jenkins_agent_service.credentials_changed(
+                self.state.agent_relation_credentials
+            ):
+                logger.info("Agent service running with current credentials. No restart needed.")
+                return
+            logger.info("Server credentials changed. Restarting agent service.")
 
         # Try to start the service with the obtained credentials from relation data
         self.charm.unit.status = ops.MaintenanceStatus("Starting jenkins agent service")
