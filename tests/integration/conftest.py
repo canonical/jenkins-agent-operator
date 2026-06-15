@@ -298,7 +298,8 @@ def jenkins_agent_requirer_fixture(
         return JENKINS_APPLICATION_NAME
 
     # Register agent node for AnyCharm
-    model_name = juju.model.split(":")[-1] if ":" in juju.model else juju.model
+    assert juju.model, "model name required for agent node registration"
+    model_name: str = juju.model.split(":")[-1] if ":" in juju.model else juju.model
     agent_secret = _register_agent_node(jenkins_client=jenkins_client, model_name=model_name)
     juju.deploy(
         ANY_CHARM_APPLICATION_NAME,
