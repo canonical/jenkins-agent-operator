@@ -807,7 +807,6 @@ integration = [
     { name = "juju" },
     { name = "protobuf" },
     { name = "pytest" },
-    { name = "pytest-asyncio" },
     { name = "pytest-operator" },
 ]
 lint = [
@@ -819,7 +818,6 @@ lint = [
     { name = "mypy" },
     { name = "pep8-naming" },
     { name = "pytest" },
-    { name = "pytest-asyncio" },
     { name = "pytest-operator" },
     { name = "ruff" },
     { name = "types-pyyaml" },
@@ -858,7 +856,6 @@ integration = [
     { name = "juju", specifier = ">=3,<4" },
     { name = "protobuf", specifier = "==7.35.0" },
     { name = "pytest" },
-    { name = "pytest-asyncio" },
     { name = "pytest-operator" },
 ]
 lint = [
@@ -870,7 +867,6 @@ lint = [
     { name = "mypy" },
     { name = "pep8-naming" },
     { name = "pytest" },
-    { name = "pytest-asyncio" },
     { name = "pytest-operator" },
     { name = "ruff" },
     { name = "types-pyyaml" },
