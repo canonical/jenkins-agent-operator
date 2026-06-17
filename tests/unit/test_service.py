@@ -201,7 +201,7 @@ def test_parse_systemd_env():
             "[Service]\n"
             'Environment="JENKINS_TOKEN=secret123"\n'
             'Environment="JENKINS_URL=http://10.1.69.130:8080"\n'
-            'Environment="JENKINS_AGENT=jenkins-agent-0"',
+            'Environment="JENKINS_AGENT=test-model-jenkins-agent-0"',
             "http://10.1.69.130:8080",
             "secret123",
             False,
@@ -211,7 +211,7 @@ def test_parse_systemd_env():
             "[Service]\n"
             'Environment="JENKINS_TOKEN=secret123"\n'
             'Environment="JENKINS_URL=http://10.1.69.130:8080"\n'
-            'Environment="JENKINS_AGENT=jenkins-agent-0"',
+            'Environment="JENKINS_AGENT=test-model-jenkins-agent-0"',
             "http://10.1.69.153:8080",
             "secret123",
             True,
@@ -241,7 +241,7 @@ def test_credentials_changed(
     harness.add_relation(
         AGENT_RELATION,
         "jenkins-k8s",
-        unit_data={"url": cred_url, "jenkins-agent-0_secret": cred_secret},
+        unit_data={"url": cred_url, "test-model-jenkins-agent-0_secret": cred_secret},
     )
     harness.begin()
     charm: JenkinsAgentCharm = harness.charm

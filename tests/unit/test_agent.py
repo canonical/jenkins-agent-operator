@@ -57,7 +57,7 @@ def test_agent_relation_changed_service_restart(
     assert charm.state.agent_relation_credentials
     assert (
         charm.state.agent_relation_credentials.secret
-        == agent_relation_data["jenkins-agent-0_secret"]
+        == agent_relation_data["test-model-jenkins-agent-0_secret"]
     )
     assert charm.state.agent_relation_credentials.address == agent_relation_data["url"]
     assert charm.unit.status.name == ops.ActiveStatus.name
@@ -80,7 +80,7 @@ def test_agent_relation_changed_service_restart_error(
     assert charm.state.agent_relation_credentials
     assert (
         charm.state.agent_relation_credentials.secret
-        == agent_relation_data["jenkins-agent-0_secret"]
+        == agent_relation_data["test-model-jenkins-agent-0_secret"]
     )
     assert charm.state.agent_relation_credentials.address == agent_relation_data["url"]
 

@@ -86,10 +86,11 @@ def test_agent_relation(jenkins_client: jenkinsapi.jenkins.Jenkins, active_agent
     act: when a job is created.
     assert: the agent is able to run job to completion.
     """
-    agent_name = f"{active_agent}-0"
     nodes = jenkins_client.get_nodes()
     assert all(node.is_online() for node in nodes.values())
-    assert any(node.name == agent_name for node in nodes.values())
+    agent_nodes = [node for node in nodes.values() if active_agent in node.name]
+    assert len(agent_nodes) == 1, f"Expected one agent node, found {len(agent_nodes)}"
+    agent_name = agent_nodes[0].name
 
     assert_job_success(
         client=jenkins_client,
@@ -138,7 +139,10 @@ def test_agent_reconnects_after_server_refresh(
     if use_docker:
         pytest.skip("Server refresh test requires Juju-deployed Jenkins server")
 
-    agent_name = f"{active_agent}-0"
+    nodes = jenkins_client.get_nodes()
+    agent_nodes = [node for node in nodes.values() if active_agent in node.name]
+    assert len(agent_nodes) == 1, f"Expected one agent node, found {len(agent_nodes)}"
+    agent_name = agent_nodes[0].name
 
     # Verify agent is initially online.
     node = jenkins_client.get_node(agent_name)
