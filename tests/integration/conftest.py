@@ -16,7 +16,6 @@ import docker
 import jenkinsapi
 import jubilant
 import pytest
-import pytest_asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +24,7 @@ JENKINS_AGENT_APPLICATION_NAME = "jenkins-agent"
 ANY_CHARM_APPLICATION_NAME = "any-charm"
 
 
-@pytest_asyncio.fixture(scope="module", name="charm")
+@pytest.fixture(scope="module", name="charm")
 async def charm_fixture(request: pytest.FixtureRequest) -> str:
     """The path to charm."""
     charm = request.config.getoption("--charm-file")
