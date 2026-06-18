@@ -148,7 +148,7 @@ class State:
             agent_meta = AgentMeta(
                 executors=tools.parse_obj_as(int, os.cpu_count()),
                 labels=charm.model.config.get("jenkins_agent_labels", "") or os.uname().machine,
-                name=charm.unit.name.replace("/", "-"),
+                name=f"{charm.model.name}-{charm.unit.name.replace('/', '-')}",
             )
         except ValidationError as exc:
             logging.error("Invalid executor state, %s", exc)

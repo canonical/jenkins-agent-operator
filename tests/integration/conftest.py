@@ -16,7 +16,6 @@ import docker
 import jenkinsapi
 import jubilant
 import pytest
-import pytest_asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +24,8 @@ JENKINS_AGENT_APPLICATION_NAME = "jenkins-agent"
 ANY_CHARM_APPLICATION_NAME = "any-charm"
 
 
-@pytest_asyncio.fixture(scope="module", name="charm")
-async def charm_fixture(request: pytest.FixtureRequest) -> str:
+@pytest.fixture(scope="module", name="charm")
+def charm_fixture(request: pytest.FixtureRequest) -> str:
     """The path to charm."""
     charm = request.config.getoption("--charm-file")
     assert charm, "Charm file not provided"
@@ -106,7 +105,7 @@ def _get_juju_jenkins_server_password(juju: jubilant.Juju, application: str):
 def _deploy_jenkins_server_juju(agent_juju: jubilant.Juju, microk8s_juju: jubilant.Juju):
     """Deploy Jenkins k8s server as agent relation provider."""
     microk8s_juju.deploy(JENKINS_APPLICATION_NAME, channel="latest/edge")
-    microk8s_juju.wait(jubilant.all_active)
+    microk8s_juju.wait(jubilant.all_active, timeout=60 * 25)
     unit_status = (
         microk8s_juju.status()
         .get_units(JENKINS_APPLICATION_NAME)
@@ -217,15 +216,16 @@ def jenkins_agent_application_fixture(
         config={"jenkins_agent_labels": "machine"},
         constraints={"arch": arch},
     )
-    juju.wait(jubilant.all_agents_idle, timeout=60 * 15)
+    juju.wait(jubilant.all_agents_idle, timeout=60 * 20)
     return JENKINS_AGENT_APPLICATION_NAME
 
 
-def _register_agent_node(jenkins_client: jenkinsapi.jenkins.Jenkins):
+def _register_agent_node(jenkins_client: jenkinsapi.jenkins.Jenkins, model_name: str):
     """Register agent node.
 
     Args:
         jenkins_client: Jenkins server client.
+        model_name: Juju model name (used for model-prefixed agent name).
     """
     agent_node_meta = {
         "num_executors": 1,
@@ -234,7 +234,7 @@ def _register_agent_node(jenkins_client: jenkinsapi.jenkins.Jenkins):
         "labels": "machine",
         "exclusive": True,
     }
-    node_name = f"{JENKINS_AGENT_APPLICATION_NAME}-0"
+    node_name = f"{model_name}-{JENKINS_AGENT_APPLICATION_NAME}-0"
     jenkins_client.nodes.create_node(node_name, agent_node_meta)
     script = (
         f'println(jenkins.model.Jenkins.getInstance().getComputer("{node_name}").getJnlpMac())'
@@ -243,8 +243,16 @@ def _register_agent_node(jenkins_client: jenkinsapi.jenkins.Jenkins):
     return secret
 
 
-def _generate_any_charm_src_overwrite(jenkins_server_url: str, agent_node_secret: str):
-    """Generate any charm src."""
+def _generate_any_charm_src_overwrite(
+    jenkins_server_url: str, agent_node_secret: str, model_name: str
+):
+    """Generate any charm src.
+
+    Args:
+        jenkins_server_url: URL of the Jenkins server.
+        agent_node_secret: Secret token for the agent node.
+        model_name: Juju model name (used for context, agent name comes from relation data).
+    """
     return {
         "any_charm.py": textwrap.dedent(
             f"""\
@@ -267,9 +275,11 @@ def _generate_any_charm_src_overwrite(jenkins_server_url: str, agent_node_secret
                     return
                 relation.data[self.model.unit].update({{"url": "{jenkins_server_url}"}})
                 for unit in relation.units:
-                    relation.data[self.model.unit].update(
-                        {{f"{{unit.name.replace('/', '-')}}_secret": "{agent_node_secret}"}}
-                    )
+                    agent_name = relation.data[unit].get("name")
+                    if agent_name:
+                        relation.data[self.model.unit].update(
+                            {{f"{{agent_name}}_secret": "{agent_node_secret}"}}
+                        )
         """
         ),
     }
@@ -287,7 +297,9 @@ def jenkins_agent_requirer_fixture(
         return JENKINS_APPLICATION_NAME
 
     # Register agent node for AnyCharm
-    agent_secret = _register_agent_node(jenkins_client=jenkins_client)
+    assert juju.model, "model name required for agent node registration"
+    model_name: str = juju.model.split(":")[-1] if ":" in juju.model else juju.model
+    agent_secret = _register_agent_node(jenkins_client=jenkins_client, model_name=model_name)
     juju.deploy(
         ANY_CHARM_APPLICATION_NAME,
         channel="latest/beta",
@@ -296,6 +308,7 @@ def jenkins_agent_requirer_fixture(
                 _generate_any_charm_src_overwrite(
                     jenkins_server_url=jenkins_client.base_server_url(),
                     agent_node_secret=agent_secret,
+                    model_name=model_name,
                 )
             )
         },

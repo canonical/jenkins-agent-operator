@@ -97,14 +97,15 @@ class JenkinsAgentCharm(ops.CharmBase):
         """Update status event hook.
 
         Raises:
-            RuntimeError: when the service is not running.
+            RuntimeError: when the service cannot be recovered.
         """
-        if self.model.get_relation(AGENT_RELATION) and not self.jenkins_agent_service.is_active:
-            logger.error("agent related to Jenkins but service is not active")
-            raise RuntimeError("jenkins-agent service is not running")
-
         if not self.model.get_relation(AGENT_RELATION):
             self.model.unit.status = ops.BlockedStatus("Waiting for relation.")
+            return
+
+        if not self.jenkins_agent_service.is_active:
+            logger.warning("Agent related to Jenkins but service is not active. Recovering.")
+            self.restart_agent_service()
             return
 
         # set NRestart of the service back to 0

@@ -141,14 +141,17 @@ def test_update_status_service_not_active(
     """
     arrange: given a charm with relation to jenkins and the service is not active.
     act: when update-status hook is fired.
-    assert: The charm correctly raise a runtime error.
+    assert: The charm attempts recovery by restarting the agent service.
     """
     harness.add_relation(charm_state.AGENT_RELATION, "jenkins-k8s")
     monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=False))
     harness.begin()
 
-    with pytest.raises(RuntimeError, match=r"jenkins-agent service is not running"):
-        harness.charm.on.update_status.emit()
+    charm: JenkinsAgentCharm = harness.charm
+    monkeypatch.setattr(charm.state, "agent_relation_credentials", None)
+    charm.on.update_status.emit()
+
+    assert charm.unit.status.name == ops.WaitingStatus.name
 
 
 def test_update_status_service_waiting_for_relation(

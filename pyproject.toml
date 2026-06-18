@@ -17,11 +17,11 @@ classifiers = [
 ]
 dependencies = [
   "jinja2==3.1.6",
-  "opentelemetry-api==1.41.1",
+  "opentelemetry-api==1.42.1",
   "ops==3.7.0",
-  "pydantic==2.12.5",
+  "pydantic==2.13.4",
   "python-dotenv==1.2.2",
-  "requests==2.33.1",
+  "requests==2.34.2",
 ]
 
 [dependency-groups]
@@ -37,7 +37,6 @@ lint = [
   "mypy",
   "pep8-naming",
   "pytest",
-  "pytest-asyncio",
   "pytest-operator",
   "ruff",
   "types-pyyaml",
@@ -61,9 +60,8 @@ integration = [
   "jenkinsapi>=0.3,<1",
   "jubilant",
   "juju>=3,<4",
-  "protobuf==6.32.1",
+  "protobuf==7.35.0",
   "pytest",
-  "pytest-asyncio",
   "pytest-operator",
 ]
 
