@@ -25,7 +25,7 @@ ANY_CHARM_APPLICATION_NAME = "any-charm"
 
 
 @pytest.fixture(scope="module", name="charm")
-async def charm_fixture(request: pytest.FixtureRequest) -> str:
+def charm_fixture(request: pytest.FixtureRequest) -> str:
     """The path to charm."""
     charm = request.config.getoption("--charm-file")
     assert charm, "Charm file not provided"
@@ -105,7 +105,7 @@ def _get_juju_jenkins_server_password(juju: jubilant.Juju, application: str):
 def _deploy_jenkins_server_juju(agent_juju: jubilant.Juju, microk8s_juju: jubilant.Juju):
     """Deploy Jenkins k8s server as agent relation provider."""
     microk8s_juju.deploy(JENKINS_APPLICATION_NAME, channel="latest/edge")
-    microk8s_juju.wait(jubilant.all_active)
+    microk8s_juju.wait(jubilant.all_active, timeout=60 * 5)
     unit_status = (
         microk8s_juju.status()
         .get_units(JENKINS_APPLICATION_NAME)
