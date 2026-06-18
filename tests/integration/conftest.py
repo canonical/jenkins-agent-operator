@@ -214,7 +214,7 @@ def jenkins_agent_application_fixture(
         num_units=1,
         base=request.param,
         config={"jenkins_agent_labels": "machine"},
-        constraints={"arch": arch, "virt-type": "virtual-machine"},
+        constraints={"arch": arch},
     )
     juju.wait(jubilant.all_agents_idle, timeout=60 * 20)
     return JENKINS_AGENT_APPLICATION_NAME
