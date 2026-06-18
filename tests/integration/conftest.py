@@ -16,7 +16,6 @@ import docker
 import jenkinsapi
 import jubilant
 import pytest
-import pytest_asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +24,8 @@ JENKINS_AGENT_APPLICATION_NAME = "jenkins-agent"
 ANY_CHARM_APPLICATION_NAME = "any-charm"
 
 
-@pytest_asyncio.fixture(scope="module", name="charm")
-async def charm_fixture(request: pytest.FixtureRequest) -> str:
+@pytest.fixture(scope="module", name="charm")
+def charm_fixture(request: pytest.FixtureRequest) -> str:
     """The path to charm."""
     charm = request.config.getoption("--charm-file")
     assert charm, "Charm file not provided"
@@ -106,7 +105,7 @@ def _get_juju_jenkins_server_password(juju: jubilant.Juju, application: str):
 def _deploy_jenkins_server_juju(agent_juju: jubilant.Juju, microk8s_juju: jubilant.Juju):
     """Deploy Jenkins k8s server as agent relation provider."""
     microk8s_juju.deploy(JENKINS_APPLICATION_NAME, channel="latest/edge")
-    microk8s_juju.wait(jubilant.all_active)
+    microk8s_juju.wait(jubilant.all_active, timeout=60 * 25)
     unit_status = (
         microk8s_juju.status()
         .get_units(JENKINS_APPLICATION_NAME)
@@ -217,7 +216,7 @@ def jenkins_agent_application_fixture(
         config={"jenkins_agent_labels": "machine"},
         constraints={"arch": arch},
     )
-    juju.wait(jubilant.all_agents_idle, timeout=60 * 15)
+    juju.wait(jubilant.all_agents_idle, timeout=60 * 20)
     return JENKINS_AGENT_APPLICATION_NAME
 
 

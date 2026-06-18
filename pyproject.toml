@@ -37,7 +37,6 @@ lint = [
   "mypy",
   "pep8-naming",
   "pytest",
-  "pytest-asyncio",
   "pytest-operator",
   "ruff",
   "types-pyyaml",
@@ -63,7 +62,6 @@ integration = [
   "juju>=3,<4",
   "protobuf==7.35.0",
   "pytest",
-  "pytest-asyncio",
   "pytest-operator",
 ]
 
