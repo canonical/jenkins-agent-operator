@@ -66,7 +66,7 @@ The `upgrade-charm` event is fired on the upgrade charm command `juju refresh je
 
 The `src/charm.py` is the default entry point for a charm and has the JenkinsAgentCharm Python class which inherits from CharmBase.
 
-CharmBase is the base class from which all Charms are formed, defined by [Ops](https://juju.is/docs/sdk/ops) (Python framework for developing charms).
+CharmBase is the base class from which all Charms are formed, defined by [Ops](https://canonical.com/juju/docs/ops/latest/) (Python framework for developing charms).
 
 > See more in the Juju docs: [Charm](https://canonical-juju.readthedocs-hosted.com/en/3.6/user/reference/charm/).
 
