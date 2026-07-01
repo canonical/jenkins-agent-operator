@@ -37,7 +37,7 @@ See [Relation endpoints](../reference/integrations.md).
 Juju events allow progression of the charm in its lifecycle and encapsulates part of the execution
 context of a charm. Below is the list of observed events for `jenkins-agent charm` with how the charm
 reacts to the event. For more information about the charm’s lifecycle in general, refer to the
-charm’s life [documentation](https://canonical-juju.readthedocs-hosted.com/en/3.6/user/reference/hook/).
+charm's life [documentation](https://canonical.com/juju/docs/juju-cli/3.6/reference/hook/).
 
 ### `install`
 
@@ -46,7 +46,7 @@ This event triggers the installation of the Jenkins agent service. It also insta
 ### `start`
 
 This event marks the charm’s state as started. See the documentation on the
-[start event](https://canonical-juju.readthedocs-hosted.com/en/3.6/user/reference/hook/#start).
+[start event](https://canonical.com/juju/docs/juju-cli/3.6/reference/hook/#start).
 
 ### `config-changed`
 
@@ -68,7 +68,7 @@ The `src/charm.py` is the default entry point for a charm and has the JenkinsAge
 
 CharmBase is the base class from which all Charms are formed, defined by [Ops](https://canonical.com/juju/docs/ops/latest/) (Python framework for developing charms).
 
-> See more in the Juju docs: [Charm](https://canonical-juju.readthedocs-hosted.com/en/3.6/user/reference/charm/).
+> See more in the Juju docs: [Charm](https://canonical.com/juju/docs/juju-cli/3.6/reference/charm/).
 
 The `__init__` method guarantees that the charm observes all events relevant to its operation and handles them.
 
