@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, PropertyMock
 
 import ops.testing
 import pytest
@@ -100,11 +100,14 @@ def test_restart_service(
     monkeypatch.setattr(systemd, "service_restart", MagicMock)
     monkeypatch.setattr(systemd, "service_running", MagicMock(return_value=True))
     monkeypatch.setattr(os.path, "exists", MagicMock(return_value=True))
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "is_installed", PropertyMock(return_value=True)
+    )
 
     harness.add_relation(AGENT_RELATION, "jenkins-k8s", unit_data=agent_relation_data)
     harness.begin()
     charm: JenkinsAgentCharm = harness.charm
-    charm.on.start.emit()
+    charm.on.config_changed.emit()
 
     assert pathlib_write_text_mock.call_args[0][0] == service_configuration_template
     assert charm.unit.status.name == ops.ActiveStatus.name

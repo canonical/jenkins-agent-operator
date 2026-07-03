@@ -69,6 +69,7 @@ class JenkinsAgentService:
     """Jenkins agent service class.
 
     Attrs:
+       is_installed: Indicate if the agent service files are installed.
        is_active: Indicate if the agent service is active and running.
     """
 
@@ -106,6 +107,11 @@ class JenkinsAgentService:
             os.chown(path, uid=u.pw_uid, gid=u.pw_gid)
         except (OSError, KeyError, TypeError) as exc:
             raise FileRenderError(f"Error rendering file:\n{exc}") from exc
+
+    @property
+    def is_installed(self) -> bool:
+        """Indicate if the jenkins agent service files are installed."""
+        return JENKINS_AGENT_SYSTEMD_PATH.exists()
 
     @property
     def is_active(self) -> bool:

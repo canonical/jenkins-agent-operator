@@ -3,15 +3,15 @@
 #
 # Learn more about testing at: https://juju.is/docs/sdk/testing
 
-"""Test for agent relations."""
+"""Test for agent relations driving reconcile."""
 
-import pathlib
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, PropertyMock
+from unittest.mock import PropertyMock
 
+import ops
 import ops.testing
 import pytest
-from charms.operator_libs_linux.v1 import systemd
 
 import service
 from charm_state import AGENT_RELATION
@@ -20,16 +20,17 @@ if TYPE_CHECKING:
     from charm import JenkinsAgentCharm
 
 
-def test_agent_relation_joined(harness: ops.testing.Harness, agent_relation_data: dict):
+def test_agent_relation_joined_sets_databag(
+    harness: ops.testing.Harness, service_mocks: SimpleNamespace, agent_relation_data: dict
+):
     """
     arrange: initialized jenkins-agent charm.
-    act: add relation to the jenkins-k8s charm.
+    act: add relation to the jenkins-k8s charm (fires relation events -> reconcile).
     assert: The agent set the correct information in the unit's relation databag.
     """
     harness.begin()
-    relation_id = harness.add_relation(
-        AGENT_RELATION, "jenkins-k8s", unit_data=agent_relation_data
-    )
+    relation_id = harness.add_relation(AGENT_RELATION, "jenkins-k8s", unit_data=agent_relation_data)
+
     charm: JenkinsAgentCharm = harness.charm
     assert (
         harness.get_relation_data(relation_id, app_or_unit="jenkins-agent/0")
@@ -37,22 +38,21 @@ def test_agent_relation_joined(harness: ops.testing.Harness, agent_relation_data
     )
 
 
-def test_agent_relation_changed_service_restart(
+def test_agent_relation_changed_restarts_service(
     harness_with_agent_relation: ops.testing.Harness,
-    monkeypatch: pytest.MonkeyPatch,
+    service_mocks: SimpleNamespace,
     agent_relation_data: dict,
 ):
     """
-    arrange: initialized jenkins-agent charm related to jenkins-k8s charm with relation data.
-    act: Trigger _on_agent_relation_changed hook.
-    assert: The charm should be in active state.
+    arrange: jenkins-agent charm related to jenkins-k8s with complete relation data.
+    act: emit an event to trigger reconcile.
+    assert: The charm restarts the service and becomes active.
     """
     harness = harness_with_agent_relation
     harness.begin()
-    charm: JenkinsAgentCharm = harness.charm
-    monkeypatch.setattr(charm.jenkins_agent_service, "restart", MagicMock())
 
-    charm.on.agent_relation_changed.emit(harness.model.get_relation(AGENT_RELATION))
+    charm: JenkinsAgentCharm = harness.charm
+    charm.on.config_changed.emit()
 
     assert charm.state.agent_relation_credentials
     assert (
@@ -60,116 +60,88 @@ def test_agent_relation_changed_service_restart(
         == agent_relation_data["test-model-jenkins-agent-0_secret"]
     )
     assert charm.state.agent_relation_credentials.address == agent_relation_data["url"]
+    assert service_mocks.restart.call_count == 1
     assert charm.unit.status.name == ops.ActiveStatus.name
 
 
-def test_agent_relation_changed_service_restart_error(
+def test_agent_relation_changed_restart_error(
     harness_with_agent_relation: ops.testing.Harness,
-    monkeypatch: pytest.MonkeyPatch,
-    agent_relation_data: dict,
+    service_mocks: SimpleNamespace,
 ):
     """
-    arrange: initialized jenkins-agent charm related to jenkins-k8s charm with relation data.
-    act: Trigger _on_agent_relation_changed hook with restart throwing an exception.
-    assert: The charm should be in error state with the correct error message.
+    arrange: jenkins-agent charm related to jenkins-k8s whose service restart fails.
+    act: emit an event to trigger reconcile.
+    assert: The charm raises RuntimeError with the correct error message.
     """
+    service_mocks.restart.side_effect = service.ServiceRestartError
     harness = harness_with_agent_relation
     harness.begin()
 
-    charm: JenkinsAgentCharm = harness.charm
-    assert charm.state.agent_relation_credentials
-    assert (
-        charm.state.agent_relation_credentials.secret
-        == agent_relation_data["test-model-jenkins-agent-0_secret"]
-    )
-    assert charm.state.agent_relation_credentials.address == agent_relation_data["url"]
-
-    monkeypatch.setattr(
-        charm.jenkins_agent_service, "restart", MagicMock(side_effect=service.ServiceRestartError)
-    )
-    with pytest.raises(RuntimeError, match=r"Error restarting the agent service\."):
-        harness.charm.on.agent_relation_changed.emit(harness.model.get_relation(AGENT_RELATION))
+    with pytest.raises(RuntimeError, match=r"Error restarting the agent service"):
+        harness.charm.on.config_changed.emit()
 
 
-@pytest.mark.parametrize(
-    "creds_changed,expect_restart",
-    [
-        pytest.param(False, 0, id="no_change"),
-        pytest.param(True, 1, id="credentials_changed"),
-    ],
-)
-def test_agent_relation_changed_service_already_active(
+def test_agent_relation_no_restart_when_unchanged(
     harness_with_agent_relation: ops.testing.Harness,
     monkeypatch: pytest.MonkeyPatch,
-    creds_changed: bool,
-    expect_restart: int,
+    service_mocks: SimpleNamespace,
 ):
     """
-    arrange: initialized jenkins-agent charm related to jenkins-k8s charm with relation data.
-    act: Trigger _on_agent_relation_changed hook when the service is already active.
-    assert: The charm restarts only when credentials have changed.
+    arrange: jenkins-agent related to jenkins-k8s, service active with unchanged creds.
+    act: emit an event to trigger reconcile.
+    assert: The charm does not restart the service and stays active.
     """
-    service_restart_mock = MagicMock()
-    service_is_active_mock = PropertyMock(return_value=True)
-    credentials_changed_mock = MagicMock(return_value=creds_changed)
-    monkeypatch.setattr(service.JenkinsAgentService, "restart", service_restart_mock)
-    monkeypatch.setattr(service.JenkinsAgentService, "is_active", service_is_active_mock)
-    monkeypatch.setattr(
-        service.JenkinsAgentService, "credentials_changed", credentials_changed_mock
-    )
+    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
+    service_mocks.credentials_changed.return_value = False
     harness = harness_with_agent_relation
     harness.begin()
 
-    harness.charm.on.agent_relation_changed.emit(harness.model.get_relation(AGENT_RELATION))
+    harness.charm.on.config_changed.emit()
 
-    assert service_is_active_mock.call_count == 1
-    assert credentials_changed_mock.call_count == 1
-    assert service_restart_mock.call_count == expect_restart
+    assert service_mocks.restart.call_count == 0
+    assert harness.charm.unit.status.name == ops.ActiveStatus.name
 
 
-def test_agent_relation_departed_service_stop_error(
-    harness_with_agent_relation: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
+def test_agent_relation_broken_stops_service(
+    harness_with_agent_relation: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    service_mocks: SimpleNamespace,
 ):
     """
-    arrange: initialized jenkins-agent charm related to jenkins-k8s charm with relation data.
-    act: remove the relation, raising an error when stopping the agent service.
-    assert: The charm falls into BlockedStatus with the correct message.
+    arrange: jenkins-agent related to jenkins-k8s with an active service.
+    act: remove the relation (fires departed then broken -> reconcile).
+    assert: The charm stops the service and is blocked waiting for a relation.
     """
-    monkeypatch.setattr(systemd, "service_stop", MagicMock(side_effect=systemd.SystemdError))
-
+    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
     harness = harness_with_agent_relation
     harness.begin()
 
     relation = harness.model.get_relation(AGENT_RELATION)
     assert relation
-    harness.remove_relation(relation_id=relation.id)
+    harness.remove_relation(relation.id)
 
-    charm: JenkinsAgentCharm = harness.charm
-    assert charm.unit.status.name == ops.BlockedStatus.name
-    assert charm.unit.status.message == "Error stopping the agent service"
+    assert service_mocks.reset.call_count >= 1
+    assert harness.charm.unit.status.name == ops.BlockedStatus.name
 
 
-def test_agent_relation_departed(
+def test_agent_relation_broken_stop_error(
     harness_with_agent_relation: ops.testing.Harness,
     monkeypatch: pytest.MonkeyPatch,
+    service_mocks: SimpleNamespace,
 ):
     """
-    arrange: initialized jenkins-agent charm related to jenkins-k8s charm with relation data.
-    act: remove the relation.
-    assert: The charm falls into BlockedStatus with the correct message.
+    arrange: jenkins-agent related to jenkins-k8s, active service whose stop fails.
+    act: remove the relation to trigger reconcile teardown.
+    assert: The charm is blocked reporting the stop error.
     """
-    monkeypatch.setattr(systemd, "service_stop", MagicMock())
-    path_unlink_mock = MagicMock()
-    monkeypatch.setattr(pathlib.Path, "unlink", path_unlink_mock)
-
+    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
+    service_mocks.reset.side_effect = service.ServiceStopError
     harness = harness_with_agent_relation
     harness.begin()
 
     relation = harness.model.get_relation(AGENT_RELATION)
     assert relation
-    harness.remove_relation(relation_id=relation.id)
+    harness.remove_relation(relation.id)
 
-    charm: JenkinsAgentCharm = harness.charm
-    assert charm.unit.status.name == ops.BlockedStatus.name
-    assert charm.unit.status.message == "Waiting for config/relation."
-    path_unlink_mock.assert_called_once()
+    assert harness.charm.unit.status.name == ops.BlockedStatus.name
+    assert harness.charm.unit.status.message == "Error stopping the agent service"

@@ -3,11 +3,13 @@
 """Fixtures for jenkins-agent charm tests."""
 
 import secrets
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 from ops.testing import Harness
 
+import service
 from charm import JenkinsAgentCharm
 from charm_state import AGENT_RELATION
 
@@ -35,6 +37,34 @@ def mock_os_release():
         return_value={"UBUNTU_CODENAME": "noble"},
     ):
         yield
+
+
+@pytest.fixture(name="service_mocks")
+def service_mocks_fixture(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    """Patch JenkinsAgentService side-effects so reconcile runs without a host.
+
+    Defaults: files already installed, service inactive, credentials changed. Individual
+    tests override any attribute (e.g. is_active) as needed.
+    """
+    mocks = SimpleNamespace(
+        install=MagicMock(),
+        restart=MagicMock(),
+        reset=MagicMock(),
+        reset_failed_state=MagicMock(),
+        credentials_changed=MagicMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "is_installed", PropertyMock(return_value=True)
+    )
+    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=False))
+    monkeypatch.setattr(service.JenkinsAgentService, "install", mocks.install)
+    monkeypatch.setattr(service.JenkinsAgentService, "restart", mocks.restart)
+    monkeypatch.setattr(service.JenkinsAgentService, "reset", mocks.reset)
+    monkeypatch.setattr(service.JenkinsAgentService, "reset_failed_state", mocks.reset_failed_state)
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "credentials_changed", mocks.credentials_changed
+    )
+    return mocks
 
 
 @pytest.fixture(scope="function", name="harness")

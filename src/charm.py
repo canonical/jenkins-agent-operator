@@ -10,7 +10,6 @@ import typing
 
 import ops
 
-import agent_observer
 import service
 from charm_state import AGENT_RELATION, InvalidStateError, State
 
@@ -35,85 +34,88 @@ class JenkinsAgentCharm(ops.CharmBase):
             return
 
         self.jenkins_agent_service = service.JenkinsAgentService(self.state)
-        self.agent_observer = agent_observer.Observer(self, self.state, self.jenkins_agent_service)
 
-        self.framework.observe(self.on.install, self._on_install)
-        self.framework.observe(self.on.start, self._on_start)
-        self.framework.observe(self.on.config_changed, self._on_config_changed)
-        self.framework.observe(self.on.upgrade_charm, self._on_upgrade_charm)
-        self.framework.observe(self.on.update_status, self._on_update_status)
+        # Funnel every hook through a single reconcile handler so the agent
+        # converges to its desired state regardless of which event fired.
+        for event in (
+            self.on.install,
+            self.on.start,
+            self.on.config_changed,
+            self.on.upgrade_charm,
+            self.on.update_status,
+            self.on[AGENT_RELATION].relation_joined,
+            self.on[AGENT_RELATION].relation_changed,
+            self.on[AGENT_RELATION].relation_departed,
+            self.on[AGENT_RELATION].relation_broken,
+        ):
+            self.framework.observe(event, self._reconcile)
 
-    def _on_install(self, _: ops.InstallEvent) -> None:
-        """Handle install event, setup the agent service.
+    def _reconcile(self, _: ops.EventBase) -> None:
+        """Reconcile the agent to its desired state on every event.
 
         Raises:
-            RuntimeError: when the installation of the agent service fails
+            RuntimeError: when installation or service start fails.
         """
+        self._reconcile_installation()
+        self._reconcile_relation_data()
+        self._reconcile_service()
+
+    def _reconcile_installation(self) -> None:
+        """Ensure the agent package and service files are installed.
+
+        Raises:
+            RuntimeError: when the installation of the agent service fails.
+        """
+        if self.jenkins_agent_service.is_installed:
+            return
         try:
             self.jenkins_agent_service.install()
         except service.PackageInstallError as exc:
             logger.error("Error installing the agent service %s", exc)
             raise RuntimeError("Error installing the agent service") from exc
 
-    def _on_config_changed(self, _: ops.ConfigChangedEvent) -> None:
-        """Handle config changed event. Update the agent's label in the relation's databag."""
+    def _reconcile_relation_data(self) -> None:
+        """Publish agent metadata to the relation databag when related."""
         if agent_relation := self.model.get_relation(AGENT_RELATION):
-            relation_data = self.state.agent_meta.as_dict()
-            agent_relation.data[self.unit].update(relation_data)
+            agent_relation.data[self.unit].update(self.state.agent_meta.as_dict())
 
-    def _on_upgrade_charm(self, _: ops.UpgradeCharmEvent) -> None:
-        """Handle upgrade charm event."""
-        self.restart_agent_service()
-
-    def _on_start(self, _: ops.EventBase) -> None:
-        """Handle on start event."""
-        self.restart_agent_service()
-
-    def restart_agent_service(self) -> None:
-        """Restart the jenkins agent charm.
+    def _reconcile_service(self) -> None:
+        """Converge the jenkins agent systemd service to the desired state.
 
         Raises:
             RuntimeError: when the service fails to properly start.
         """
+        agent_service = self.jenkins_agent_service
         if not self.model.get_relation(AGENT_RELATION):
-            self.model.unit.status = ops.BlockedStatus("Waiting for relation.")
+            if agent_service.is_active:
+                try:
+                    agent_service.reset()
+                except service.ServiceStopError:
+                    self.unit.status = ops.BlockedStatus("Error stopping the agent service")
+                    return
+            self.unit.status = ops.BlockedStatus("Waiting for relation.")
             return
 
-        if not self.state.agent_relation_credentials:
-            self.model.unit.status = ops.WaitingStatus("Waiting for complete relation data.")
+        credentials = self.state.agent_relation_credentials
+        if not credentials:
+            self.unit.status = ops.WaitingStatus("Waiting for complete relation data.")
             logger.info("Waiting for complete relation data.")
             return
 
-        self.model.unit.status = ops.MaintenanceStatus("Starting agent service.")
+        if agent_service.is_active and not agent_service.credentials_changed(credentials):
+            logger.info("Agent running with current credentials. No restart needed.")
+            agent_service.reset_failed_state()
+            self.unit.status = ops.ActiveStatus()
+            return
+
+        self.unit.status = ops.MaintenanceStatus("Starting agent service.")
         try:
-            self.jenkins_agent_service.restart()
+            agent_service.restart()
         except service.ServiceRestartError as exc:
             logger.error("Error restarting the agent service %s", exc)
             raise RuntimeError("Error restarting the agent service") from exc
 
-        self.model.unit.status = ops.ActiveStatus()
-
-    def _on_update_status(self, _: ops.UpdateStatusEvent) -> None:
-        """Update status event hook.
-
-        Raises:
-            RuntimeError: when the service cannot be recovered.
-        """
-        if not self.model.get_relation(AGENT_RELATION):
-            self.model.unit.status = ops.BlockedStatus("Waiting for relation.")
-            return
-
-        if not self.jenkins_agent_service.is_active:
-            logger.warning("Agent related to Jenkins but service is not active. Recovering.")
-            self.restart_agent_service()
-            return
-
-        # set NRestart of the service back to 0
-        # We do it here because at this point we can be certain that
-        # the service is up and running
-        self.jenkins_agent_service.reset_failed_state()
-
-        self.model.unit.status = ops.ActiveStatus()
+        self.unit.status = ops.ActiveStatus()
 
 
 if __name__ == "__main__":  # pragma: no cover
