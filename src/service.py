@@ -79,8 +79,15 @@ class JenkinsAgentService:
             state: The Jenkins agent state.
         """
         self.state = state
+        # The templates render systemd/shell configuration, not HTML/XML. HTML
+        # autoescaping would corrupt credential values containing characters such
+        # as & < > ' " (e.g. turning a token's '&' into '&amp;'), so escaping is
+        # disabled for every template extension.
         self._template_loader = jinja2.Environment(
-            loader=jinja2.FileSystemLoader(searchpath="templates"), autoescape=True
+            loader=jinja2.FileSystemLoader(searchpath="templates"),
+            autoescape=jinja2.select_autoescape(
+                enabled_extensions=(), default_for_string=False, default=False
+            ),
         )
 
     def _render_file(self, path: Path, content: str, mode: int) -> None:
@@ -111,9 +118,7 @@ class JenkinsAgentService:
     def is_active(self) -> bool:
         """Indicate if the jenkins agent service is active."""
         try:
-            return os.path.exists(str(AGENT_READY_PATH)) and systemd.service_running(
-                AGENT_SERVICE_NAME
-            )
+            return AGENT_READY_PATH.exists() and systemd.service_running(AGENT_SERVICE_NAME)
         except SystemError as exc:
             logger.error("Failed to call systemctl:\n%s", exc)
             return False
@@ -136,21 +141,82 @@ class JenkinsAgentService:
             or current_env.get("JENKINS_TOKEN") != credentials.secret
         )
 
-    def install(self) -> None:
-        """Install and set up the jenkins agent apt package.
+    def _write_if_changed(self, path: Path, content: str, mode: int) -> bool:
+        """Render content to a file only when it differs from what is on disk.
+
+        Args:
+            path: Destination file path.
+            content: Desired file content.
+            mode: Access permission mask applied when the file is (re)written.
+
+        Returns:
+            True if the file was created or its content changed, False otherwise.
 
         Raises:
-            PackageInstallError: if the package installation failed.
+            FileRenderError: if reading the existing file from disk fails.
         """
-        agent_service = Path("templates/jenkins_agent.service")
-        JENKINS_AGENT_SYSTEMD_PATH.write_text(
-            agent_service.read_text(encoding="utf-8"), encoding="utf-8"
-        )
-        agent_script = Path("templates/jenkins_agent.sh")
-        self._render_file(
-            JENKINS_AGENT_START_SCRIPT_PATH, agent_script.read_text(encoding="utf-8"), 755
-        )
+        try:
+            if path.exists() and path.read_text(encoding="utf-8") == content:
+                return False
+        except OSError as exc:
+            raise FileRenderError(f"Error reading file:\n{exc}") from exc
+        self._render_file(path, content, mode)
+        return True
 
+    def _sync_service_files(self) -> bool:
+        """Render the systemd unit and launch script, rewriting only on drift.
+
+        Idempotent: reads the shipped templates and writes them to disk only when
+        their contents differ, so an upgrade that changes a template is always
+        picked up while an unchanged reconcile is a no-op.
+
+        Returns:
+            True if the systemd unit file changed (a daemon reload is required),
+            False otherwise.
+        """
+        service_content = Path("templates/jenkins_agent.service").read_text(encoding="utf-8")
+        unit_changed = self._write_if_changed(JENKINS_AGENT_SYSTEMD_PATH, service_content, 0o644)
+        script_content = Path("templates/jenkins_agent.sh").read_text(encoding="utf-8")
+        self._write_if_changed(JENKINS_AGENT_START_SCRIPT_PATH, script_content, 0o755)
+        return unit_changed
+
+    def _required_packages_installed(self) -> bool:
+        """Check whether every required apt package is already installed.
+
+        Returns:
+            True if all required packages are present, False otherwise.
+        """
+        for package in REQUIRED_PACKAGES:
+            try:
+                apt.DebianPackage.from_installed_package(package)
+            except apt.PackageNotFoundError:
+                return False
+        return True
+
+    def install(self) -> None:
+        """Converge the agent service files and required packages to desired state.
+
+        Idempotent and safe to run on every reconcile: the systemd unit and launch
+        script are re-rendered whenever their contents drift from the shipped
+        templates (reloading and enabling the unit when the unit file changes), and
+        the required apt packages are installed only when missing.
+
+        Raises:
+            PackageInstallError: if enabling the service or installing a package
+                failed.
+        """
+        unit_file_changed = self._sync_service_files()
+        if unit_file_changed:
+            try:
+                systemd.daemon_reload()
+                # Enable the unit so its [Install] WantedBy target is wired up and
+                # the agent starts automatically after a machine reboot.
+                systemd.service_enable(AGENT_SERVICE_NAME)
+            except systemd.SystemdError as exc:
+                raise PackageInstallError("Error enabling the agent service") from exc
+
+        if self._required_packages_installed():
+            return
         try:
             apt.add_package(REQUIRED_PACKAGES, update_cache=True)
         except (apt.PackageError, apt.PackageNotFoundError) as exc:
