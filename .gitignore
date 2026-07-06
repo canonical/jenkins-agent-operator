@@ -28,3 +28,8 @@ stage/
 !.vale/styles/config/vocabularies/local
 # END VALE WORKFLOW IGNORE
 .DS_Store
+
+# AI artifacts
+.hermes
+docs/plans/
+
