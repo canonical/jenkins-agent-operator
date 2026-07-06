@@ -150,7 +150,6 @@ def _deploy_jenkins_server_docker():
         detach=True,
         ports={
             "8080": 8080,
-            "50000": 50000,
         },
         # Restart is required due to Jenkins requiring restart after plugin installation. When
         # Jenkins server exits, the Docker container will also exit.

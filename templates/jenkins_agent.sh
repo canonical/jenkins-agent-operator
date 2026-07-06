@@ -54,7 +54,7 @@ fi
 # Specify the agent as ready
 touch "${JENKINS_HOME}/.ready"
 info "Connecting to jenkins"
-if ! java -jar "${JENKINS_HOME}/agent.jar" -url "${JENKINS_URL}" -name "${JENKINS_AGENT}" -workDir "${JENKINS_HOME}" -noReconnect -secret "${JENKINS_TOKEN}"; then
+if ! java -jar "${JENKINS_HOME}/agent.jar" -url "${JENKINS_URL}" -name "${JENKINS_AGENT}" -workDir "${JENKINS_HOME}" -noReconnect -secret "${JENKINS_TOKEN}" -websocket; then
     err "Error connecting to jenkins"
     # Remove ready mark if unsuccessful
     rm $JENKINS_HOME/.ready

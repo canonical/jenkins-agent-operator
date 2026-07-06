@@ -184,3 +184,22 @@ def test_agent_reconnects_after_server_refresh(
     # Verify agent is functional by checking it's online.
     node = new_client.get_node(agent_name)
     assert node.is_online(), f"Agent {agent_name} should be online after reconnection"
+
+
+async def test_websocket_flag_present(ops_test, active_agent: str):
+    """Verify the rendered agent script contains -websocket flag.
+
+    arrange: deployed jenkins-agent charm
+    act: read the rendered jenkins-agent script from the unit
+    assert: script contains '-websocket' in the java command
+    """
+    app = ops_test.model.applications[active_agent]
+    unit = app.units[0]
+
+    action = await unit.run("cat /usr/bin/jenkins-agent")
+    await action.wait()
+
+    script_content = action.results.get("stdout", "")
+    assert "-websocket" in script_content, (
+        "Agent script missing -websocket flag. This breaks connection through HTTP-only ingress."
+    )
