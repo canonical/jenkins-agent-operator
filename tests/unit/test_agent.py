@@ -29,7 +29,9 @@ def test_agent_relation_joined_sets_databag(
     assert: The agent set the correct information in the unit's relation databag.
     """
     harness.begin()
-    relation_id = harness.add_relation(AGENT_RELATION, "jenkins-k8s", unit_data=agent_relation_data)
+    relation_id = harness.add_relation(
+        AGENT_RELATION, "jenkins-k8s", unit_data=agent_relation_data
+    )
 
     charm: JenkinsAgentCharm = harness.charm
     assert (

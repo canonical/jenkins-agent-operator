@@ -43,7 +43,7 @@ def mock_os_release():
 def service_mocks_fixture(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     """Patch JenkinsAgentService side-effects so reconcile runs without a host.
 
-    Defaults: files already installed, service inactive, credentials changed. Individual
+    Defaults: install is a no-op, service inactive, credentials changed. Individual
     tests override any attribute (e.g. is_active) as needed.
     """
     mocks = SimpleNamespace(
@@ -53,14 +53,13 @@ def service_mocks_fixture(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         reset_failed_state=MagicMock(),
         credentials_changed=MagicMock(return_value=True),
     )
-    monkeypatch.setattr(
-        service.JenkinsAgentService, "is_installed", PropertyMock(return_value=True)
-    )
     monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=False))
     monkeypatch.setattr(service.JenkinsAgentService, "install", mocks.install)
     monkeypatch.setattr(service.JenkinsAgentService, "restart", mocks.restart)
     monkeypatch.setattr(service.JenkinsAgentService, "reset", mocks.reset)
-    monkeypatch.setattr(service.JenkinsAgentService, "reset_failed_state", mocks.reset_failed_state)
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "reset_failed_state", mocks.reset_failed_state
+    )
     monkeypatch.setattr(
         service.JenkinsAgentService, "credentials_changed", mocks.credentials_changed
     )

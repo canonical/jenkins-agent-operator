@@ -39,17 +39,14 @@ def test___init___invalid_state(harness: ops.testing.Harness, monkeypatch: pytes
     assert charm.unit.status.message == "Invalid executor message"
 
 
-def test_reconcile_installs_when_not_installed(
+def test_reconcile_installs_on_every_hook(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
 ):
     """
-    arrange: a charm whose agent service is not yet installed.
+    arrange: a charm with a mocked agent service install.
     act: emit the install hook to trigger reconcile.
     assert: the agent service install method is called once.
     """
-    monkeypatch.setattr(
-        service.JenkinsAgentService, "is_installed", PropertyMock(return_value=False)
-    )
     install_mock = MagicMock()
     monkeypatch.setattr(service.JenkinsAgentService, "install", install_mock)
     harness.begin()
@@ -60,19 +57,19 @@ def test_reconcile_installs_when_not_installed(
     assert install_mock.call_count == 1
 
 
-def test_reconcile_skips_install_when_installed(
+def test_reconcile_reinstalls_on_upgrade(
     harness: ops.testing.Harness, service_mocks: SimpleNamespace
 ):
     """
-    arrange: a charm whose agent service is already installed.
-    act: emit the install hook to trigger reconcile.
-    assert: the agent service install method is not called.
+    arrange: an installed charm.
+    act: emit the upgrade-charm hook to trigger reconcile.
+    assert: the agent service install method is called so upgraded files sync.
     """
     harness.begin()
 
-    harness.charm.on.install.emit()
+    harness.charm.on.upgrade_charm.emit()
 
-    assert service_mocks.install.call_count == 0
+    assert service_mocks.install.call_count == 1
 
 
 def test_reconcile_install_error(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch):
@@ -81,9 +78,6 @@ def test_reconcile_install_error(harness: ops.testing.Harness, monkeypatch: pyte
     act: emit the install hook to trigger reconcile.
     assert: reconcile raises RuntimeError.
     """
-    monkeypatch.setattr(
-        service.JenkinsAgentService, "is_installed", PropertyMock(return_value=False)
-    )
     monkeypatch.setattr(
         service.JenkinsAgentService,
         "install",

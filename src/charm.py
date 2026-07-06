@@ -35,8 +35,6 @@ class JenkinsAgentCharm(ops.CharmBase):
 
         self.jenkins_agent_service = service.JenkinsAgentService(self.state)
 
-        # Funnel every hook through a single reconcile handler so the agent
-        # converges to its desired state regardless of which event fired.
         for event in (
             self.on.install,
             self.on.start,
@@ -61,13 +59,11 @@ class JenkinsAgentCharm(ops.CharmBase):
         self._reconcile_service()
 
     def _reconcile_installation(self) -> None:
-        """Ensure the agent package and service files are installed.
+        """Ensure the agent package and service files are installed and current.
 
         Raises:
             RuntimeError: when the installation of the agent service fails.
         """
-        if self.jenkins_agent_service.is_installed:
-            return
         try:
             self.jenkins_agent_service.install()
         except service.PackageInstallError as exc:
