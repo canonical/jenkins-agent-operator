@@ -183,7 +183,9 @@ def test_restart_service(
     monkeypatch.setattr(systemd, "daemon_reload", MagicMock)
     monkeypatch.setattr(systemd, "service_restart", MagicMock)
     monkeypatch.setattr(systemd, "service_running", MagicMock(return_value=True))
-    monkeypatch.setattr(os.path, "exists", MagicMock(return_value=True))
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "_startup_check", MagicMock(return_value=True)
+    )
     # The reconcile handler also runs install(); it is exercised separately, so
     # stub it here to keep this test focused on the restart/config-render path.
     monkeypatch.setattr(service.JenkinsAgentService, "install", MagicMock())
@@ -254,7 +256,16 @@ def test_service_is_active_systemd_error(
     assert: The call should return false and not raising any exceptions.
     """
     harness.begin()
-    monkeypatch.setattr(os.path, "exists", MagicMock(return_value=True))
+    # Mock Path.exists to return True for AGENT_READY_PATH so we exercise the
+    # systemd.service_running path.
+    real_exists = Path.exists
+
+    def _mock_exists(self):
+        if str(self) == str(service.AGENT_READY_PATH):
+            return True
+        return real_exists(self)
+
+    monkeypatch.setattr(Path, "exists", _mock_exists)
     monkeypatch.setattr(systemd, "service_running", MagicMock(side_effect=SystemError))
     charm: JenkinsAgentCharm = harness.charm
 

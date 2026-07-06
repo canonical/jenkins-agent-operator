@@ -118,9 +118,7 @@ class JenkinsAgentService:
     def is_active(self) -> bool:
         """Indicate if the jenkins agent service is active."""
         try:
-            return AGENT_READY_PATH.exists() and systemd.service_running(
-                AGENT_SERVICE_NAME
-            )
+            return AGENT_READY_PATH.exists() and systemd.service_running(AGENT_SERVICE_NAME)
         except SystemError as exc:
             logger.error("Failed to call systemctl:\n%s", exc)
             return False
