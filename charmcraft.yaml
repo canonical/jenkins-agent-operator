@@ -61,6 +61,15 @@ config:
       description: |
         Comma-separated list of labels to be assigned to the agent in Jenkins. If not set it will
         default to the agents hardware identifier, e.g.: 'x86_64'
+    websocket_mode:
+      type: boolean
+      default: true
+      description: |
+        Enable WebSocket mode for agent connection. When enabled, the agent connects to Jenkins
+        over HTTP/HTTPS using WebSocket protocol instead of requiring direct TCP access to port
+        50000. This is required when using HTTP-only ingress (e.g., traefik-k8s) and is the
+        recommended mode for most deployments. Disable only if Jenkins server has direct TCP port
+        50000 accessibility and you need JNLP4 protocol instead of WebSocket.
 
 provides:
   agent:
