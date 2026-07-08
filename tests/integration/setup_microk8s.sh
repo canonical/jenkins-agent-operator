@@ -9,6 +9,9 @@
 # Jenkins machine agent charm is deployed on lxd and Jenkins-k8s server charm is deployed on
 # microk8s.
 sg snap_microk8s -c "microk8s enable storage"
+# Enable MetalLB for LoadBalancer service support (required by traefik-k8s)
+# Use a local IP range that won't conflict with the host network
+sg snap_microk8s -c "microk8s enable metallb:10.64.140.43-10.64.140.49"
 sg snap_microk8s -c "microk8s status --wait-ready"
 # lxd should be installed and inited by a previous step in integration test action.
 echo "bootstrapping lxd juju controller"
