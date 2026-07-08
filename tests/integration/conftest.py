@@ -150,7 +150,6 @@ def _deploy_jenkins_server_docker():
         detach=True,
         ports={
             "8080": 8080,
-            "50000": 50000,
         },
         # Restart is required due to Jenkins requiring restart after plugin installation. When
         # Jenkins server exits, the Docker container will also exit.
@@ -316,3 +315,59 @@ def jenkins_agent_requirer_fixture(
     )
     juju.wait(jubilant.all_agents_idle, timeout=60 * 15)
     return ANY_CHARM_APPLICATION_NAME
+
+
+@pytest.fixture(scope="module", name="traefik_k8s_application")
+def traefik_k8s_application_fixture(use_docker: bool, microk8s_juju: jubilant.Juju):
+    """Deploy traefik-k8s charm on microk8s controller.
+
+    This fixture is only used for amd64 integration tests. Non-amd64 architectures
+    (arm64, s390x, ppc64le) run with --use-docker flag and skip Traefik deployment
+    to avoid microk8s setup issues.
+
+    Returns:
+        The traefik-k8s application name, or skips the test if using Docker.
+    """
+    if use_docker:
+        # Traefik ingress test is not supported with Docker Jenkins deployment
+        pytest.skip("Traefik ingress test requires Juju-deployed Jenkins server")
+
+    logger.info("Deploying traefik-k8s for ingress testing...")
+    microk8s_juju.deploy(
+        "traefik-k8s",
+        app="traefik-k8s",
+        channel="latest/stable",
+        trust=True,
+    )
+    microk8s_juju.wait(jubilant.all_active, timeout=60 * 10)
+    logger.info("traefik-k8s deployed successfully")
+    return "traefik-k8s"
+
+
+@pytest.fixture(scope="module", name="ingressed_jenkins_server")
+def ingressed_jenkins_server_fixture(
+    jenkins_client: jenkinsapi.jenkins.Jenkins,
+    traefik_k8s_application: str,
+    microk8s_juju: jubilant.Juju,
+):
+    """Jenkins server with traefik ingress configured.
+
+    Integrates jenkins-k8s with traefik-k8s to provide HTTP-only ingress access,
+    which is the scenario that requires -webSocket flag (issue #165).
+
+    Returns:
+        The jenkins-k8s application name with traefik ingress configured.
+    """
+    if not traefik_k8s_application:
+        # Should not reach here due to skip in traefik_k8s_application fixture
+        pytest.skip("Traefik not deployed")
+
+    logger.info("Configuring traefik ingress for jenkins-k8s...")
+    # Integrate jenkins-k8s:ingress with traefik-k8s:ingress for HTTP ingress
+    # Note: jenkins-k8s has multiple ingress endpoints, we use the main 'ingress' endpoint
+    microk8s_juju.integrate(
+        f"{JENKINS_APPLICATION_NAME}:ingress", f"{traefik_k8s_application}:ingress"
+    )
+    microk8s_juju.wait(jubilant.all_active, timeout=60 * 5)
+    logger.info("Traefik ingress configured for jenkins-k8s")
+    return JENKINS_APPLICATION_NAME

@@ -123,12 +123,14 @@ class State:
         agent_relation_credentials: The full set of credentials from the agent relation. None if
             partial data is set or the credentials do not belong to current agent.
         unit_data: Data about the current unit.
+        websocket_mode: Whether to use WebSocket mode for agent connection.
         jenkins_agent_service_name: The Jenkins agent workload container name.
     """
 
     agent_meta: AgentMeta
     agent_relation_credentials: typing.Optional[Credentials]
     unit_data: UnitData
+    websocket_mode: bool
     jenkins_agent_service_name: str = "jenkins-agent"
 
     @classmethod
@@ -172,8 +174,12 @@ class State:
             logging.error("Unsupported series, %s: %s", unit_series, exc)
             raise InvalidStateError("Unsupported series.") from exc
 
+        # Get websocket_mode config
+        websocket_mode = bool(charm.model.config.get("websocket_mode", True))
+
         return cls(
             agent_meta=agent_meta,
             agent_relation_credentials=agent_relation_credentials,
             unit_data=unit_data,
+            websocket_mode=websocket_mode,
         )
