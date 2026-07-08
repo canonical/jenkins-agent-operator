@@ -54,6 +54,17 @@ fi
 # Specify the agent as ready
 touch "${JENKINS_HOME}/.ready"
 info "Connecting to jenkins"
+# Launch the Jenkins agent with the following flags:
+#   -url: Jenkins server URL (e.g., http://jenkins.example.com:8080)
+#   -name: Agent node name for identification in Jenkins
+#   -workDir: Working directory for agent (JENKINS_HOME)
+#   -noReconnect: Do not attempt to reconnect if connection fails
+#   -secret: Agent authentication token provided by Jenkins server
+#   -websocket: Tunnel remoting protocol over WebSocket (HTTP) instead of TCP:50000.
+#     This enables agents to work through HTTP-only reverse proxies (traefik, HAProxy, nginx).
+#     Required for deployments where Jenkins is behind ingress that doesn't expose port 50000.
+#     WebSocket support has been stable since Jenkins 2.229 (2020) and works in all scenarios.
+#     See: https://www.jenkins.io/blog/2020/02/02/web-socket/
 if ! java -jar "${JENKINS_HOME}/agent.jar" -url "${JENKINS_URL}" -name "${JENKINS_AGENT}" -workDir "${JENKINS_HOME}" -noReconnect -secret "${JENKINS_TOKEN}"{% if websocket_mode %} -webSocket{% endif %}; then
     err "Error connecting to jenkins"
     # Remove ready mark if unsuccessful
