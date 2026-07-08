@@ -162,6 +162,7 @@ class JenkinsAgentService:
             raise FileRenderError(f"Error reading file:\n{exc}") from exc
         self._render_file(path, content, mode)
         return True
+
     def _sync_service_files(self) -> bool:
         """Write the systemd unit and its launcher script if they've changed.
 
@@ -176,7 +177,7 @@ class JenkinsAgentService:
         """
         service_content = Path("templates/jenkins_agent.service").read_text(encoding="utf-8")
         unit_changed = self._write_if_changed(JENKINS_AGENT_SYSTEMD_PATH, service_content, 0o644)
-        
+
         # Render the agent script template with websocket_mode config
         websocket_mode = self.state.websocket_mode
         script_template = self._template_loader.get_template("jenkins_agent.sh.j2")

@@ -222,10 +222,10 @@ def test_agent_traefik_ingress(
     status = juju.status()
     model_name = status.model.name
 
-    import subprocess
+    import subprocess  # nosec: B404 - subprocess usage is safe here for juju SSH
 
     logger.info("Checking jenkins-agent logs for WebSocket connection...")
-    log_result = subprocess.run(
+    log_result = subprocess.run(  # nosec: B607, B603
         [
             "juju",
             "ssh",
@@ -268,9 +268,7 @@ def test_agent_traefik_ingress(
         nodes = jenkins_client.get_nodes()
         assert all(node.is_online() for node in nodes.values()), "All agents should be online"
 
-        agent_nodes = [
-            node for node in nodes.values() if jenkins_agent_application in node.name
-        ]
+        agent_nodes = [node for node in nodes.values() if jenkins_agent_application in node.name]
         assert len(agent_nodes) == 1, f"Expected one agent node, found {len(agent_nodes)}"
         agent_name = agent_nodes[0].name
 
@@ -282,8 +280,12 @@ def test_agent_traefik_ingress(
             agent_name=agent_name,
             test_target_label="machine",
         )
-        logger.info("✓ Traefik ingress test passed: agent connected via WebSocket and executed job")
+        logger.info(
+            "✓ Traefik ingress test passed: agent connected via WebSocket and executed job"
+        )
     except requests.exceptions.HTTPError as e:
         # Jenkins API access may be limited through ingress - the core test (WebSocket connection) passed
         logger.warning("Jenkins API access limited through ingress (expected): %s", e)
-        logger.info("✓ Traefik ingress test passed: agent connected via WebSocket (job execution skipped)")
+        logger.info(
+            "✓ Traefik ingress test passed: agent connected via WebSocket (job execution skipped)"
+        )

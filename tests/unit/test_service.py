@@ -280,7 +280,7 @@ def test_parse_systemd_env():
     """
     content = (
         "[Service]\n"
-        'Environment="JENKINS_TOKEN=abc123"\n'
+        'Environment="JENKINS_TOKEN=abc123"\n'  # nosec: B105
         'Environment="JENKINS_URL=http://10.1.69.130:8080"\n'
         'Environment="JENKINS_AGENT=jenkins-agent-k8s-0"'
     )
