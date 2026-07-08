@@ -22,10 +22,10 @@ sudo microk8s enable metallb:10.64.140.43-10.64.140.49
 sudo microk8s status --wait-ready
 # lxd should be installed and inited by a previous step in integration test action.
 echo "bootstrapping lxd juju controller"
-juju bootstrap localhost localhost
+sg snap_microk8s -c "juju bootstrap localhost localhost --debug"
 
 echo "bootstrapping secondary microk8s controller"
-juju bootstrap microk8s microk8s
+sg snap_microk8s -c "juju bootstrap microk8s microk8s --debug"
 
 echo "Switching to testing model"
-juju switch localhost
+sg snap_microk8s -c "juju switch localhost"
