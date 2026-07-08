@@ -11,6 +11,7 @@ import jenkinsapi.jenkins
 import jubilant
 import pytest
 import requests
+from jubilant._juju import CLIError
 
 logger = logging.getLogger()
 
@@ -216,9 +217,16 @@ def test_agent_traefik_ingress(
       - logs do NOT show "port:50000 is not reachable" (the bug from issue #165)
       - agent can execute jobs successfully (functional verification)
     """
-    # Relate agent to ingressed Jenkins server
-    logger.info("Relating jenkins-agent to ingressed jenkins-k8s...")
-    juju.integrate(jenkins_agent_requirer, jenkins_agent_application)
+    # Relate agent to ingressed Jenkins server (if not already related)
+    logger.info("Ensuring jenkins-agent is related to ingressed jenkins-k8s...")
+    try:
+        juju.integrate(jenkins_agent_requirer, jenkins_agent_application)
+    except CLIError as e:
+        # Relation may already exist from earlier tests in the same module
+        if "already exists" in str(e):
+            logger.info("Relation already exists, continuing...")
+        else:
+            raise
     juju.wait(jubilant.all_active, timeout=60 * 15)
     logger.info("jenkins-agent reached active status")
 
