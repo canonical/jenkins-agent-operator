@@ -204,6 +204,10 @@ def test_agent_traefik_ingress(
     routed by traefik (HTTP-only ingress), causing connection failure. With -webSocket, the
     agent uses the same HTTP connection and successfully connects.
 
+    NOTE: This test only runs on amd64 with microk8s. Non-amd64 architectures (arm64, s390x,
+    ppc64le) use Docker-based Jenkins deployment (via --use-docker flag) and automatically
+    skip this test via the traefik_k8s_application fixture.
+
     arrange: jenkins-k8s with traefik ingress configured, jenkins-agent deployed with websocket_mode=true
     act: relate agent to ingressed jenkins server
     assert:

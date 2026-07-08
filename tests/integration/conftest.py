@@ -321,8 +321,12 @@ def jenkins_agent_requirer_fixture(
 def traefik_k8s_application_fixture(use_docker: bool, microk8s_juju: jubilant.Juju):
     """Deploy traefik-k8s charm on microk8s controller.
 
+    This fixture is only used for amd64 integration tests. Non-amd64 architectures
+    (arm64, s390x, ppc64le) run with --use-docker flag and skip Traefik deployment
+    to avoid microk8s setup issues.
+
     Returns:
-        The traefik-k8s application name, or None if using Docker.
+        The traefik-k8s application name, or skips the test if using Docker.
     """
     if use_docker:
         # Traefik ingress test is not supported with Docker Jenkins deployment
