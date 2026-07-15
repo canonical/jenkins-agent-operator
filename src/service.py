@@ -182,8 +182,10 @@ class JenkinsAgentService:
         websocket_mode = self.state.websocket_mode
         script_template = self._template_loader.get_template("jenkins_agent.sh.j2")
         script_content = script_template.render(websocket_mode=websocket_mode)
-        self._write_if_changed(JENKINS_AGENT_START_SCRIPT_PATH, script_content, 0o755)
-        return unit_changed
+        script_changed = self._write_if_changed(
+            JENKINS_AGENT_START_SCRIPT_PATH, script_content, 0o755
+        )
+        return unit_changed or script_changed
 
     def _required_packages_installed(self) -> bool:
         """Check whether every required apt package is already installed.
