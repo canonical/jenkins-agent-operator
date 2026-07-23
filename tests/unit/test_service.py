@@ -208,6 +208,43 @@ def test_install_renders_custom_user_and_workdir(
     assert "ExecStopPost=rm -rf /srv/jenkins/.ready" in unit_text
 
 
+def test_install_renders_script_with_jenkins_home(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """
+    arrange: Harness with patched install paths and templates.
+    act: run the install hook.
+    assert: the launcher script references the configured JENKINS_HOME.
+    """
+    host = _mock_install_host(monkeypatch, tmp_path)
+    apt_add_package_mock = MagicMock()
+    monkeypatch.setattr(apt, "add_package", apt_add_package_mock)
+
+    harness.update_config({"jenkins_home": "/srv/jenkins"})
+    harness.begin_with_initial_hooks()
+    script_text = Path(host.script_path).read_text()
+
+    assert 'JENKINS_HOME="${JENKINS_HOME:-/srv/jenkins}"' in script_text
+
+
+def test_install_renders_script_with_default_jenkins_home(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """
+    arrange: Harness without any jenkins_home override.
+    act: run the install hook.
+    assert: the launcher script references the default JENKINS_HOME.
+    """
+    host = _mock_install_host(monkeypatch, tmp_path)
+    apt_add_package_mock = MagicMock()
+    monkeypatch.setattr(apt, "add_package", apt_add_package_mock)
+
+    harness.begin_with_initial_hooks()
+    script_text = Path(host.script_path).read_text()
+
+    assert 'JENKINS_HOME="${JENKINS_HOME:-/var/lib/jenkins}"' in script_text
+
+
 def test_restart_service(
     harness: ops.testing.Harness,
     monkeypatch: pytest.MonkeyPatch,

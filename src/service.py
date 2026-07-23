@@ -184,10 +184,13 @@ class JenkinsAgentService:
         )
         unit_changed = self._write_if_changed(JENKINS_AGENT_SYSTEMD_PATH, service_content, 0o644)
 
-        # Render the agent script template with websocket_mode config
+        # Render the agent script template with websocket_mode config and home dir
         websocket_mode = self.state.websocket_mode
         script_template = self._template_loader.get_template("jenkins_agent.sh.j2")
-        script_content = script_template.render(websocket_mode=websocket_mode)
+        script_content = script_template.render(
+            websocket_mode=websocket_mode,
+            jenkins_home=str(self.state.jenkins_home),
+        )
         script_changed = self._write_if_changed(
             JENKINS_AGENT_START_SCRIPT_PATH, script_content, 0o755
         )
