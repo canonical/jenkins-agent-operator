@@ -163,6 +163,51 @@ def test_install_enable_error(
         harness.charm.on.install.emit()
 
 
+def test_install_renders_user_and_workdir(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """
+    arrange: Harness with patched install paths and templates.
+    act: run the install hook.
+    assert: the systemd unit contains User, Group and WorkingDirectory derived from
+        charm config defaults.
+    """
+    host = _mock_install_host(monkeypatch, tmp_path)
+    apt_add_package_mock = MagicMock()
+    monkeypatch.setattr(apt, "add_package", apt_add_package_mock)
+
+    harness.begin_with_initial_hooks()
+    unit_text = host.unit_path.read_text()
+
+    assert "User=root" in unit_text
+    assert "Group=root" in unit_text
+    assert "WorkingDirectory=/var/lib/jenkins" in unit_text
+    assert 'Environment="JENKINS_HOME=/var/lib/jenkins"' in unit_text
+
+
+def test_install_renders_custom_user_and_workdir(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """
+    arrange: Harness configured with agent_user=jenkins and jenkins_home=/srv/jenkins.
+    act: run the install hook.
+    assert: the systemd unit uses the configured user, group and working directory.
+    """
+    host = _mock_install_host(monkeypatch, tmp_path)
+    apt_add_package_mock = MagicMock()
+    monkeypatch.setattr(apt, "add_package", apt_add_package_mock)
+
+    harness.update_config({"agent_user": "jenkins", "jenkins_home": "/srv/jenkins"})
+    harness.begin_with_initial_hooks()
+    unit_text = host.unit_path.read_text()
+
+    assert "User=jenkins" in unit_text
+    assert "Group=jenkins" in unit_text
+    assert "WorkingDirectory=/srv/jenkins" in unit_text
+    assert 'Environment="JENKINS_HOME=/srv/jenkins"' in unit_text
+    assert "ExecStopPost=rm -rf /srv/jenkins/.ready" in unit_text
+
+
 def test_restart_service(
     harness: ops.testing.Harness,
     monkeypatch: pytest.MonkeyPatch,

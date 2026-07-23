@@ -5,10 +5,14 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
+User={{ agent_user }}
+Group={{ agent_user }}
+WorkingDirectory={{ jenkins_home }}
 Restart=on-failure
 RestartSec=5s
 ExecStart=/usr/bin/jenkins-agent
-ExecStopPost=rm -rf /var/lib/jenkins/.ready
+ExecStopPost=rm -rf {{ jenkins_home }}/.ready
+Environment="JENKINS_HOME={{ jenkins_home }}"
 
 [Install]
 WantedBy=multi-user.target

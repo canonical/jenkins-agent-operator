@@ -118,7 +118,9 @@ class JenkinsAgentService:
     def is_active(self) -> bool:
         """Indicate if the jenkins agent service is active."""
         try:
-            return AGENT_READY_PATH.exists() and systemd.service_running(AGENT_SERVICE_NAME)
+            return self.state.jenkins_home.joinpath(".ready").exists() and systemd.service_running(
+                AGENT_SERVICE_NAME
+            )
         except SystemError as exc:
             logger.error("Failed to call systemctl:\n%s", exc)
             return False
@@ -175,7 +177,11 @@ class JenkinsAgentService:
             True if the systemd unit file changed (a daemon reload is required),
             False otherwise.
         """
-        service_content = Path("templates/jenkins_agent.service").read_text(encoding="utf-8")
+        unit_template = self._template_loader.get_template("jenkins_agent.service")
+        service_content = unit_template.render(
+            agent_user=self.state.agent_user,
+            jenkins_home=str(self.state.jenkins_home),
+        )
         unit_changed = self._write_if_changed(JENKINS_AGENT_SYSTEMD_PATH, service_content, 0o644)
 
         # Render the agent script template with websocket_mode config
@@ -245,6 +251,7 @@ class JenkinsAgentService:
             "JENKINS_TOKEN": credentials.secret,
             "JENKINS_URL": credentials.address,
             "JENKINS_AGENT": self.state.agent_meta.name,
+            "JENKINS_HOME": str(self.state.jenkins_home),
         }
         # render template file
         agent_env_conf_template = self._template_loader.get_template("jenkins_agent_env.conf.j2")
