@@ -61,6 +61,20 @@ config:
       description: |
         Comma-separated list of labels to be assigned to the agent in Jenkins. If not set it will
         default to the agents hardware identifier, e.g.: 'x86_64'
+    agent_user:
+      type: string
+      default: root
+      description: |
+        OS user that runs the Jenkins agent systemd service. Defaults to root.
+        If changed to a non-root user, the charm will ensure the user exists and
+        that JENKINS_HOME is owned by this user. Note that the systemd unit file
+        itself is always owned by root.
+    jenkins_home:
+      type: string
+      default: /var/lib/jenkins
+      description: |
+        Home directory for the Jenkins agent, passed to the agent as -workDir and
+        used as the working directory by the systemd service.
     websocket_mode:
       type: boolean
       default: true

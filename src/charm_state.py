@@ -7,6 +7,7 @@ import logging
 import os
 import typing
 from dataclasses import dataclass
+from pathlib import Path
 
 import ops
 from dotenv import dotenv_values
@@ -132,6 +133,8 @@ class State:
     unit_data: UnitData
     websocket_mode: bool
     jenkins_agent_service_name: str = "jenkins-agent"
+    agent_user: str = "root"
+    jenkins_home: Path = Path("/var/lib/jenkins")
 
     @classmethod
     def from_charm(cls, charm: ops.CharmBase) -> "State":
@@ -177,9 +180,15 @@ class State:
         # Get websocket_mode config
         websocket_mode = bool(charm.model.config.get("websocket_mode", True))
 
+        # Get user/home config
+        agent_user = str(charm.model.config.get("agent_user", "root") or "root")
+        jenkins_home = Path(str(charm.model.config.get("jenkins_home", "/var/lib/jenkins") or "/var/lib/jenkins"))
+
         return cls(
             agent_meta=agent_meta,
             agent_relation_credentials=agent_relation_credentials,
             unit_data=unit_data,
             websocket_mode=websocket_mode,
+            agent_user=agent_user,
+            jenkins_home=jenkins_home,
         )
