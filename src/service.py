@@ -3,7 +3,6 @@
 
 """The agent pebble service module."""
 
-import grp
 import logging
 import os
 import pwd
@@ -81,25 +80,21 @@ class JenkinsAgentService:
             state: The Jenkins agent state.
         """
         self.state = state
-        # The templates render systemd/shell configuration, not HTML/XML. HTML
-        # autoescaping would corrupt credential values containing characters such
-        # as & < > ' " (e.g. turning a token's '&' into '&amp;'), so escaping is
-        # disabled for every template extension.
         self._template_loader = jinja2.Environment(
-            loader=jinja2.FileSystemLoader(searchpath="templates"),
-            autoescape=jinja2.select_autoescape(
-                enabled_extensions=(), default_for_string=False, default=False
-            ),
+            loader=jinja2.FileSystemLoader("templates"), autoescape=True
         )
 
-    def _render_file(self, path: Path, content: str, mode: int) -> None:
-        """Write a content rendered from a template to a file.
+    def _render_file(self, path: Path, content: str, mode: int, owner: str = "root") -> None:
+        """Write a file to disk, setting its mode and ownership.
 
         Args:
-            path: Path object to the file.
-            content: the data to be written to the file.
-            mode: access permission mask applied to the
-              file using chmod (e.g. 0o640).
+            path: target file path.
+            content: file content to write.
+            mode: permission bits to apply (e.g. 0o640).
+            owner: POSIX username the file should be owned by. Defaults to root,
+                which is appropriate for systemd unit files and the launcher script
+                because systemd itself runs as root and only drops privileges when
+                executing the service (see the `User=` directive in the unit).
 
         Raises:
             FileRenderError: if interaction with the filesystem fails
@@ -107,14 +102,33 @@ class JenkinsAgentService:
         try:
             path.write_text(content)
             os.chmod(path, mode)
-            # Get the uid/gid for the root user (running the service).
-            # TODO: the user running the jenkins agent is currently root
-            # we should replace this by defining a dedicated user in the apt package
-            u = pwd.getpwnam("root")
-            # Set the correct ownership for the file.
-            os.chown(path, uid=u.pw_uid, gid=u.pw_gid)
+            user_info = pwd.getpwnam(owner)
+            os.chown(path, uid=user_info.pw_uid, gid=user_info.pw_gid)
         except (OSError, KeyError, TypeError) as exc:
             raise FileRenderError(f"Error rendering file:\n{exc}") from exc
+
+    def _write_if_changed(self, path: Path, content: str, mode: int, owner: str = "root") -> bool:
+        """Render content to a file only when it differs from what is on disk.
+
+        Args:
+            path: Destination file path.
+            content: Desired file content.
+            mode: Access permission mask applied when the file is (re)written.
+            owner: POSIX username the file should be owned by.
+
+        Returns:
+            True if the file was created or its content changed, False otherwise.
+
+        Raises:
+            FileRenderError: if reading the existing file from disk fails.
+        """
+        try:
+            if path.exists() and path.read_text(encoding="utf-8") == content:
+                return False
+        except OSError as exc:
+            raise FileRenderError(f"Error reading file:\n{exc}") from exc
+        self._render_file(path, content, mode, owner=owner)
+        return True
 
     @property
     def is_active(self) -> bool:
@@ -144,28 +158,6 @@ class JenkinsAgentService:
             current_env.get("JENKINS_URL") != credentials.address
             or current_env.get("JENKINS_TOKEN") != credentials.secret
         )
-
-    def _write_if_changed(self, path: Path, content: str, mode: int) -> bool:
-        """Render content to a file only when it differs from what is on disk.
-
-        Args:
-            path: Destination file path.
-            content: Desired file content.
-            mode: Access permission mask applied when the file is (re)written.
-
-        Returns:
-            True if the file was created or its content changed, False otherwise.
-
-        Raises:
-            FileRenderError: if reading the existing file from disk fails.
-        """
-        try:
-            if path.exists() and path.read_text(encoding="utf-8") == content:
-                return False
-        except OSError as exc:
-            raise FileRenderError(f"Error reading file:\n{exc}") from exc
-        self._render_file(path, content, mode)
-        return True
 
     def _sync_service_files(self) -> bool:
         """Write the systemd unit and its launcher script if they've changed.
@@ -260,18 +252,23 @@ class JenkinsAgentService:
             logger.info("Creating system user %s", username)
             try:
                 subprocess.run(
-                    ["useradd", "--system", "--home-dir", str(home), "--create-home", username],
+                    [
+                        "/usr/sbin/useradd",
+                        "--system",
+                        "--home-dir",
+                        str(home),
+                        "--create-home",
+                        username,
+                    ],
                     check=True,
                     capture_output=True,
                 )
             except (subprocess.CalledProcessError, FileNotFoundError) as exc:
                 logger.warning("Failed to create user %s: %s", username, exc)
                 return
-
         try:
             home.mkdir(parents=True, exist_ok=True)
             user_info = pwd.getpwnam(username)
-            group_info = grp.getgrgid(user_info.pw_gid)
             os.chown(home, uid=user_info.pw_uid, gid=user_info.pw_gid)
             # Also chown existing contents if the directory already existed with
             # different ownership, as the agent expects write access to its home.
@@ -319,7 +316,7 @@ class JenkinsAgentService:
                 "Error interacting with the filesystem when rendering configuration file"
             ) from exc
 
-        # Check if the service is running after startup
+        # Check if the service running after startup
         if not self._startup_check():
             raise ServiceRestartError("Error waiting for the agent service to start")
 
@@ -331,7 +328,7 @@ class JenkinsAgentService:
         so we need to do it manually.
         """
         try:
-            # Disable protected-access here because reset-failed is not implemented in the lib
+            # Disable protected_access here because reset-failed is not implemented in the lib
             systemd._systemctl("reset-failed", AGENT_SERVICE_NAME)  # pylint: disable=W0212
         except systemd.SystemdError:
             # We only log the exception here as this is not critical

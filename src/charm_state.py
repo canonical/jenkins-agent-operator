@@ -182,7 +182,9 @@ class State:
 
         # Get user/home config
         agent_user = str(charm.model.config.get("agent_user", "root") or "root")
-        jenkins_home = Path(str(charm.model.config.get("jenkins_home", "/var/lib/jenkins") or "/var/lib/jenkins"))
+        jenkins_home = Path(
+            str(charm.model.config.get("jenkins_home", "/var/lib/jenkins") or "/var/lib/jenkins")
+        )
 
         return cls(
             agent_meta=agent_meta,
