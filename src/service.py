@@ -3,10 +3,12 @@
 
 """The agent pebble service module."""
 
+import grp
 import logging
 import os
 import pwd
 import re
+import subprocess
 import time
 import typing
 from pathlib import Path
@@ -222,6 +224,7 @@ class JenkinsAgentService:
                 failed.
         """
         unit_file_changed = self._sync_service_files()
+        self._ensure_user_and_home()
         if unit_file_changed:
             try:
                 systemd.daemon_reload()
@@ -237,6 +240,45 @@ class JenkinsAgentService:
             apt.add_package(REQUIRED_PACKAGES, update_cache=True)
         except (apt.PackageError, apt.PackageNotFoundError) as exc:
             raise PackageInstallError("Error installing the Java package") from exc
+
+    def _ensure_user_and_home(self) -> None:
+        """Ensure the configured agent user exists and owns the home directory.
+
+        Does nothing for the root user. For non-root users, the user is created
+        with the configured home directory if missing, and the home directory is
+        created and owned by the user. Failures are logged but not raised, to keep
+        the charm from hard-blocking when an operator has pre-created the user/home.
+        """
+        username = self.state.agent_user
+        home = self.state.jenkins_home
+        if username == "root":
+            return
+
+        try:
+            pwd.getpwnam(username)
+        except KeyError:
+            logger.info("Creating system user %s", username)
+            try:
+                subprocess.run(
+                    ["useradd", "--system", "--home-dir", str(home), "--create-home", username],
+                    check=True,
+                    capture_output=True,
+                )
+            except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+                logger.warning("Failed to create user %s: %s", username, exc)
+                return
+
+        try:
+            home.mkdir(parents=True, exist_ok=True)
+            user_info = pwd.getpwnam(username)
+            group_info = grp.getgrgid(user_info.pw_gid)
+            os.chown(home, uid=user_info.pw_uid, gid=user_info.pw_gid)
+            # Also chown existing contents if the directory already existed with
+            # different ownership, as the agent expects write access to its home.
+            for path in home.rglob("*"):
+                os.chown(path, uid=user_info.pw_uid, gid=user_info.pw_gid)
+        except (OSError, KeyError) as exc:
+            logger.warning("Failed to set ownership of %s to %s: %s", home, username, exc)
 
     def restart(self) -> None:
         """Start the agent service.

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import pwd
+import subprocess
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, PropertyMock
@@ -243,6 +245,52 @@ def test_install_renders_script_with_default_jenkins_home(
     script_text = Path(host.script_path).read_text()
 
     assert 'JENKINS_HOME="${JENKINS_HOME:-/var/lib/jenkins}"' in script_text
+
+
+def test_install_creates_user_and_home(
+    harness: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+):
+    """
+    arrange: Harness with agent_user=jenkins and jenkins_home pointing inside tmp_path.
+    act: run the install hook.
+    assert: the home directory is created and owned by a created jenkins user.
+    """
+    home = tmp_path / "jenkins-home"
+    _mock_install_host(monkeypatch, tmp_path)
+    monkeypatch.setattr(apt, "add_package", MagicMock())
+
+    harness.update_config({"agent_user": "jenkins", "jenkins_home": str(home)})
+    harness.begin_with_initial_hooks()
+
+    assert home.exists()
+    stat = home.stat()
+    assert pwd.getpwuid(stat.st_uid).pw_name == "jenkins"
+
+
+def test_install_warns_but_continues_on_useradd_failure(
+    harness: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+):
+    """
+    arrange: Harness with agent_user=unknown and useradd mocked to fail.
+    act: run the install hook.
+    assert: the charm emits a warning but does not error.
+    """
+    _mock_install_host(monkeypatch, tmp_path)
+    monkeypatch.setattr(apt, "add_package", MagicMock())
+    monkeypatch.setattr(
+        subprocess, "run", MagicMock(side_effect=subprocess.CalledProcessError(1, ["useradd"]))
+    )
+
+    harness.update_config({"agent_user": "unknown"})
+    harness.begin_with_initial_hooks()
+
+    assert "Failed to create user unknown" in caplog.text
 
 
 def test_restart_service(
