@@ -7,7 +7,9 @@ import logging
 import os
 import pwd
 import re
-import subprocess
+
+# Bandit flags the subprocess import; useradd/visudo are trusted fixed-path system binaries.
+import subprocess  # nosec: B404
 import time
 import typing
 from pathlib import Path
@@ -20,7 +22,7 @@ from charm_state import Credentials, State
 
 logger = logging.getLogger(__name__)
 AGENT_SERVICE_NAME = "jenkins-agent"
-REQUIRED_PACKAGES = ["openjdk-21-jre"]
+REQUIRED_PACKAGES = ["openjdk-21-jre", "sudo"]
 SYSTEMD_SERVICE_CONF_DIR = "/etc/systemd/system/jenkins-agent.service.d/"
 STARTUP_CHECK_TIMEOUT = 30
 STARTUP_CHECK_INTERVAL = 2
@@ -28,6 +30,7 @@ JENKINS_HOME = Path("/var/lib/jenkins")
 JENKINS_AGENT_SYSTEMD_PATH = Path("/etc/systemd/system/jenkins-agent.service")
 JENKINS_AGENT_START_SCRIPT_PATH = Path("/usr/bin/jenkins-agent")
 AGENT_READY_PATH = Path(JENKINS_HOME / ".ready")
+SUDOERS_DROP_IN_DIR = Path("/etc/sudoers.d")
 
 # Pattern for systemd Environment="KEY=VALUE" lines.
 _SYSTEMD_ENV_PATTERN = re.compile(r'^Environment="([^=]+)=(.*)"$')
@@ -234,12 +237,14 @@ class JenkinsAgentService:
             raise PackageInstallError("Error installing the Java package") from exc
 
     def _ensure_user_and_home(self) -> None:
-        """Ensure the configured agent user exists and owns the home directory.
+        """Ensure the configured agent user exists, owns the home, and can sudo.
 
         Does nothing for the root user. For non-root users, the user is created
-        with the configured home directory if missing, and the home directory is
-        created and owned by the user. Failures are logged but not raised, to keep
-        the charm from hard-blocking when an operator has pre-created the user/home.
+        (regular user, not a system account) with the configured home directory if
+        missing, the home directory is created and owned by the user, and a
+        passwordless sudo entry is written to /etc/sudoers.d. Failures are logged
+        but not raised, to keep the charm from hard-blocking when an operator has
+        pre-created the user/home.
         """
         username = self.state.agent_user
         home = self.state.jenkins_home
@@ -249,15 +254,16 @@ class JenkinsAgentService:
         try:
             pwd.getpwnam(username)
         except KeyError:
-            logger.info("Creating system user %s", username)
+            logger.info("Creating user %s", username)
             try:
-                subprocess.run(
+                subprocess.run(  # nosec: B603 - fixed-path system binary (useradd)
                     [
                         "/usr/sbin/useradd",
-                        "--system",
                         "--home-dir",
                         str(home),
                         "--create-home",
+                        "--shell",
+                        "/bin/bash",
                         username,
                     ],
                     check=True,
@@ -276,6 +282,39 @@ class JenkinsAgentService:
                 os.chown(path, uid=user_info.pw_uid, gid=user_info.pw_gid)
         except (OSError, KeyError) as exc:
             logger.warning("Failed to set ownership of %s to %s: %s", home, username, exc)
+
+        self._grant_passwordless_sudo(username)
+
+    def _grant_passwordless_sudo(self, username: str) -> None:
+        """Write a sudoers drop-in granting the user passwordless sudo.
+
+        The file is checked with visudo before it is installed so a syntax error
+        does not lock operators out of sudo. Failures are logged and do not block
+        reconcile.
+
+        Args:
+            username: the POSIX username to grant sudo.
+        """
+        sudoers_content = f"{username} ALL=(ALL:ALL) NOPASSWD: ALL\n"
+        drop_in_path = SUDOERS_DROP_IN_DIR / f"99-jenkins-agent-{username}"
+        try:
+            subprocess.run(  # nosec: B603 - fixed-path system binary (visudo)
+                ["/usr/sbin/visudo", "-cf", "-"],
+                input=sudoers_content,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+            logger.warning("Generated sudoers content failed validation: %s", exc)
+            return
+        try:
+            SUDOERS_DROP_IN_DIR.mkdir(parents=True, exist_ok=True)
+            drop_in_path.write_text(sudoers_content)
+            os.chmod(drop_in_path, 0o440)
+            os.chown(drop_in_path, uid=0, gid=0)
+        except (OSError, KeyError) as exc:
+            logger.warning("Failed to write sudoers drop-in %s: %s", drop_in_path, exc)
 
     def restart(self) -> None:
         """Start the agent service.
