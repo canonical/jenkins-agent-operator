@@ -36,6 +36,8 @@ jobs:
       self-hosted-runner-arch: ${{ matrix.runtime }}
       self-hosted-runner-label: ${{ matrix.runtime }}
       with-uv: true
+      tmate-debug: true
+      tmate-timeout: 90
   allure-report:
     if: ${{ !cancelled() && github.event_name == 'schedule' }}
     needs:
