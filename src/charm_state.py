@@ -133,7 +133,7 @@ class State:
     unit_data: UnitData
     websocket_mode: bool
     jenkins_agent_service_name: str = "jenkins-agent"
-    agent_user: str = "root"
+    agent_user: str = "jenkins"
     jenkins_home: Path = Path("/var/lib/jenkins")
 
     @classmethod
@@ -181,8 +181,10 @@ class State:
         websocket_mode = bool(charm.model.config.get("websocket_mode", True))
 
         # Get user/home config
-        agent_user = str(charm.model.config.get("agent_user", "root") or "root")
-        jenkins_home = Path(str(charm.model.config.get("jenkins_home", "/var/lib/jenkins") or "/var/lib/jenkins"))
+        agent_user = str(charm.model.config.get("agent_user", "jenkins") or "jenkins")
+        jenkins_home = Path(
+            str(charm.model.config.get("jenkins_home", "/var/lib/jenkins") or "/var/lib/jenkins")
+        )
 
         return cls(
             agent_meta=agent_meta,
