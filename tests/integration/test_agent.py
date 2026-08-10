@@ -361,6 +361,11 @@ def test_agent_traefik_ingress(
         agent_name = agent_nodes[0].name
 
         _run_test_job(agent_name)
+    except requests.exceptions.ConnectionError as exc:
+        _dump_diagnostics()
+        raise AssertionError(
+            f"Jenkins API connection failed while checking agent status: {exc}"
+        ) from exc
     except requests.exceptions.HTTPError as e:
         # Jenkins API access may be limited through ingress - the core test (WebSocket connection) passed
         logger.warning("Jenkins API access limited through ingress (expected): %s", e)
