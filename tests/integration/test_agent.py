@@ -7,6 +7,7 @@ import logging
 import textwrap
 import time
 
+import jenkinsapi.custom_exceptions
 import jenkinsapi.jenkins
 import jubilant
 import pytest
@@ -361,6 +362,11 @@ def test_agent_traefik_ingress(
         agent_name = agent_nodes[0].name
 
         _run_test_job(agent_name)
+    except jenkinsapi.custom_exceptions.JenkinsAPIException as exc:
+        _dump_diagnostics()
+        raise AssertionError(
+            f"Jenkins API wrapper failed while checking agent status: {exc}"
+        ) from exc
     except requests.exceptions.ConnectionError as exc:
         _dump_diagnostics()
         raise AssertionError(
