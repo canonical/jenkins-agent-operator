@@ -194,6 +194,8 @@ def test_agent_traefik_ingress(
     jenkins_agent_requirer: str,
     jenkins_client: jenkinsapi.jenkins.Jenkins,
     juju: jubilant.Juju,
+    microk8s_juju: jubilant.Juju,
+    traefik_k8s_application: str,
 ):
     """
     Verify agent connects successfully through traefik ingress using WebSocket.
@@ -217,6 +219,63 @@ def test_agent_traefik_ingress(
       - logs do NOT show "port:50000 is not reachable" (the bug from issue #165)
       - agent can execute jobs successfully (functional verification)
     """
+    # ruff: noqa: C901
+    # Diagnostic-heavy test; complexity comes from explicit failure logging.
+
+    def _dump_diagnostics():
+        """Dump model and application state to aid debugging connection failures."""
+        logger.error("=== Jenkins API connection failure diagnostics ===")
+        logger.error("Jenkins client URL: %s", jenkins_client.base_server_url())
+        try:
+            logger.error("LXD model status:\n%s", juju.status())
+        except Exception as exc:  # nosec B110
+            logger.error("Failed to dump LXD model status: %s", exc)
+        try:
+            logger.error(
+                "LXD model debug log:\n%s",
+                juju.cli("debug-log", "--replay", "--no-tail", "--limit", "200"),
+            )
+        except Exception as exc:  # nosec B110
+            logger.error("Failed to dump LXD model debug log: %s", exc)
+        try:
+            logger.error("MicroK8s model status:\n%s", microk8s_juju.status())
+        except Exception as exc:  # nosec B110
+            logger.error("Failed to dump MicroK8s model status: %s", exc)
+        try:
+            logger.error(
+                "MicroK8s model debug log:\n%s",
+                microk8s_juju.cli("debug-log", "--replay", "--no-tail", "--limit", "200"),
+            )
+        except Exception as exc:  # nosec B110
+            logger.error("Failed to dump MicroK8s model debug log: %s", exc)
+        try:
+            traefik_status = microk8s_juju.run(
+                f"{traefik_k8s_application}/0", "show-proxied-endpoints"
+            )
+            logger.error("Traefik proxied endpoints:\n%s", traefik_status)
+        except Exception as exc:  # nosec B110
+            logger.error("Failed to dump traefik proxied endpoints: %s", exc)
+        logger.error("=== end diagnostics ===")
+
+    def _run_test_job(agent_name: str):
+        """Run the Jenkins test job and dump diagnostics on connection failure."""
+        logger.info("Agent %s is online, running test job...", agent_name)
+        try:
+            assert_job_success(
+                client=jenkins_client,
+                agent_name=agent_name,
+                test_target_label="machine",
+            )
+        except requests.exceptions.ConnectionError as exc:
+            _dump_diagnostics()
+            raise AssertionError(
+                f"Jenkins API connection failed while running test job against "
+                f"{jenkins_client.base_server_url()}: {exc}"
+            ) from exc
+        logger.info(
+            "✓ Traefik ingress test passed: agent connected via WebSocket and executed job"
+        )
+
     # Relate agent to ingressed Jenkins server (if not already related)
     logger.info("Ensuring jenkins-agent is related to ingressed jenkins-k8s...")
     try:
@@ -284,17 +343,7 @@ def test_agent_traefik_ingress(
         assert len(agent_nodes) == 1, f"Expected one agent node, found {len(agent_nodes)}"
         agent_name = agent_nodes[0].name
 
-        logger.info("Agent %s is online, running test job...", agent_name)
-
-        # Run a test job to verify the agent can execute work
-        assert_job_success(
-            client=jenkins_client,
-            agent_name=agent_name,
-            test_target_label="machine",
-        )
-        logger.info(
-            "✓ Traefik ingress test passed: agent connected via WebSocket and executed job"
-        )
+        _run_test_job(agent_name)
     except requests.exceptions.HTTPError as e:
         # Jenkins API access may be limited through ingress - the core test (WebSocket connection) passed
         logger.warning("Jenkins API access limited through ingress (expected): %s", e)

@@ -63,12 +63,12 @@ config:
         default to the agents hardware identifier, e.g.: 'x86_64'
     agent_user:
       type: string
-      default: root
+      default: jenkins
       description: |
-        OS user that runs the Jenkins agent systemd service. Defaults to root.
-        If changed to a non-root user, the charm will ensure the user exists and
-        that JENKINS_HOME is owned by this user. Note that the systemd unit file
-        itself is always owned by root.
+        OS user that runs the Jenkins agent systemd service. Defaults to jenkins.
+        The charm ensures the user exists, owns JENKINS_HOME, and is granted
+        passwordless sudo. Note that the systemd unit file itself is always owned
+        by root.
     jenkins_home:
       type: string
       default: /var/lib/jenkins
