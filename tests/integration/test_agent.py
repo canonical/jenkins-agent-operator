@@ -77,6 +77,23 @@ def assert_job_success(
     """
     job = client.create_job(agent_name, _gen_test_job_xml(test_target_label))
     queue_item = job.invoke()
+    try:
+        queue_item.poll()
+        node = client.get_node(agent_name)
+        logger.info(
+            "Queued Jenkins job %s: queue_id=%s age=%.1fs why=%r blocked=%s "
+            "stuck=%s buildable=%s agent_online=%s",
+            job.name,
+            queue_item.queue_id,
+            queue_item.get_age(),
+            queue_item.why,
+            queue_item.is_blocked,
+            queue_item.is_stuck,
+            queue_item.is_buildable,
+            node.is_online(),
+        )
+    except Exception as exc:  # nosec B110 - diagnostics must not mask the test result
+        logger.warning("Unable to collect Jenkins queue diagnostics: %s", exc)
     queue_item.block_until_complete()
     build: jenkinsapi.build.Build = queue_item.get_build()
     assert build.get_status() == "SUCCESS"
