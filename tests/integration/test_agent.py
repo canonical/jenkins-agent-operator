@@ -3,6 +3,7 @@
 
 """Integration tests for jenkins-agent-k8s-operator charm."""
 
+import json
 import logging
 import textwrap
 import time
@@ -66,27 +67,43 @@ def active_agent_fixture(
     return jenkins_agent_application
 
 
-def _fresh_server_client(microk8s_juju: jubilant.Juju) -> jenkinsapi.jenkins.Jenkins:
-    """Build a Jenkins client from the current unit address.
+def _fresh_server_client(
+    microk8s_juju: jubilant.Juju, traefik_k8s_application: str
+) -> jenkinsapi.jenkins.Jenkins:
+    """Build a Jenkins client routed through the stable Traefik ingress.
 
-    The pod IP can change on server refresh, so re-resolve rather than reusing
-    a stale module-scoped client (see test_agent_reconnects_after_server_refresh).
+    The pod IP is ephemeral and the pod has a transient not-ready window when
+    restarted (it briefly 404s rather than refusing). Traefik only routes to
+    ready backends, so it is the stable target. Retry the first poll to absorb
+    any residual readiness race.
     """
-    unit_status = (
-        microk8s_juju.status()
-        .get_units(JENKINS_APPLICATION_NAME)
-        .get(f"{JENKINS_APPLICATION_NAME}/0")
+    result = microk8s_juju.run(
+        f"{traefik_k8s_application}/0", "show-proxied-endpoints"
     )
-    assert unit_status, f"Unit status not found for {JENKINS_APPLICATION_NAME}"
-    result = microk8s_juju.run(f"{JENKINS_APPLICATION_NAME}/0", "get-admin-password")
-    password = result.results.get("password", "")
+    proxied = json.loads(result.results["proxied-endpoints"])
+    url = proxied[JENKINS_APPLICATION_NAME]["url"]
+    admin_result = microk8s_juju.run(
+        f"{JENKINS_APPLICATION_NAME}/0", "get-admin-password"
+    )
+    password = admin_result.results.get("password", "")
     assert password, "Failed to get admin password"
-    return jenkinsapi.jenkins.Jenkins(
-        baseurl=f"http://{unit_status.address}:8080",
-        username="admin",
-        password=password,
-        timeout=60,
-    )
+
+    client: jenkinsapi.jenkins.Jenkins | None = None
+    last_err: Exception | None = None
+    for attempt in range(1, 11):
+        try:
+            client = jenkinsapi.jenkins.Jenkins(
+                baseurl=url, username="admin", password=password, timeout=60
+            )
+            return client
+        except (jenkinsapi.custom_exceptions.JenkinsAPIException, requests.exceptions.RequestException) as exc:
+            last_err = exc
+            logger.warning(
+                "Jenkins API not ready (attempt %d/10) via %s: %s", attempt, url, exc
+            )
+            time.sleep(5)
+    assert client is not None  # unreachable; type narrow for pyright
+    raise AssertionError(f"Jenkins API not ready via {url} after retries: {last_err}")
 
 
 def assert_job_success(
@@ -374,10 +391,9 @@ def test_agent_traefik_ingress(
 
     # Verify agent is functional by checking it's registered in Jenkins
     # Note: When using traefik ingress, the Jenkins API access may be limited.
-    # Use a freshly-resolved client: the module-scoped one may hold a stale pod IP
-    # if a prior test refreshed the server. The core verification (WebSocket
-    # connection + active status) is already confirmed above.
-    fresh_client = _fresh_server_client(microk8s_juju)
+    # Use a client routed through the Traefik ingress: it survives pod restarts
+    # and balancer-side readiness, unlike the module-scoped pod-IP client.
+    fresh_client = _fresh_server_client(microk8s_juju, traefik_k8s_application)
     try:
         nodes = fresh_client.get_nodes()
 
