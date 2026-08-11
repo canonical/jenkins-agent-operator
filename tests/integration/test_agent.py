@@ -78,9 +78,7 @@ def active_agent_fixture(
 )
 def _initialize_client(url: str, password: str) -> jenkinsapi.jenkins.Jenkins:
     """Initialize a Jenkins API client, retrying until the server is ready."""
-    return jenkinsapi.jenkins.Jenkins(
-        baseurl=url, username="admin", password=password, timeout=60
-    )
+    return jenkinsapi.jenkins.Jenkins(baseurl=url, username="admin", password=password, timeout=60)
 
 
 def _fresh_server_client(
