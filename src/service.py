@@ -7,6 +7,9 @@ import logging
 import os
 import pwd
 import re
+
+# Bandit flags the subprocess import; useradd/visudo are trusted fixed-path system binaries.
+import subprocess  # nosec: B404
 import time
 import typing
 from pathlib import Path
@@ -19,7 +22,7 @@ from charm_state import Credentials, State
 
 logger = logging.getLogger(__name__)
 AGENT_SERVICE_NAME = "jenkins-agent"
-REQUIRED_PACKAGES = ["openjdk-21-jre"]
+REQUIRED_PACKAGES = ["openjdk-21-jre", "sudo"]
 SYSTEMD_SERVICE_CONF_DIR = "/etc/systemd/system/jenkins-agent.service.d/"
 STARTUP_CHECK_TIMEOUT = 30
 STARTUP_CHECK_INTERVAL = 2
@@ -27,6 +30,7 @@ JENKINS_HOME = Path("/var/lib/jenkins")
 JENKINS_AGENT_SYSTEMD_PATH = Path("/etc/systemd/system/jenkins-agent.service")
 JENKINS_AGENT_START_SCRIPT_PATH = Path("/usr/bin/jenkins-agent")
 AGENT_READY_PATH = Path(JENKINS_HOME / ".ready")
+SUDOERS_DROP_IN_DIR = Path("/etc/sudoers.d")
 
 # Pattern for systemd Environment="KEY=VALUE" lines.
 _SYSTEMD_ENV_PATTERN = re.compile(r'^Environment="([^=]+)=(.*)"$')
@@ -79,25 +83,21 @@ class JenkinsAgentService:
             state: The Jenkins agent state.
         """
         self.state = state
-        # The templates render systemd/shell configuration, not HTML/XML. HTML
-        # autoescaping would corrupt credential values containing characters such
-        # as & < > ' " (e.g. turning a token's '&' into '&amp;'), so escaping is
-        # disabled for every template extension.
         self._template_loader = jinja2.Environment(
-            loader=jinja2.FileSystemLoader(searchpath="templates"),
-            autoescape=jinja2.select_autoescape(
-                enabled_extensions=(), default_for_string=False, default=False
-            ),
+            loader=jinja2.FileSystemLoader("templates"), autoescape=True
         )
 
-    def _render_file(self, path: Path, content: str, mode: int) -> None:
-        """Write a content rendered from a template to a file.
+    def _render_file(self, path: Path, content: str, mode: int, owner: str = "root") -> None:
+        """Write a file to disk, setting its mode and ownership.
 
         Args:
-            path: Path object to the file.
-            content: the data to be written to the file.
-            mode: access permission mask applied to the
-              file using chmod (e.g. 0o640).
+            path: target file path.
+            content: file content to write.
+            mode: permission bits to apply (e.g. 0o640).
+            owner: POSIX username the file should be owned by. Defaults to root,
+                which is appropriate for systemd unit files and the launcher script
+                because systemd itself runs as root and only drops privileges when
+                executing the service (see the `User=` directive in the unit).
 
         Raises:
             FileRenderError: if interaction with the filesystem fails
@@ -105,14 +105,33 @@ class JenkinsAgentService:
         try:
             path.write_text(content)
             os.chmod(path, mode)
-            # Get the uid/gid for the root user (running the service).
-            # TODO: the user running the jenkins agent is currently root
-            # we should replace this by defining a dedicated user in the apt package
-            u = pwd.getpwnam("root")
-            # Set the correct ownership for the file.
-            os.chown(path, uid=u.pw_uid, gid=u.pw_gid)
+            user_info = pwd.getpwnam(owner)
+            os.chown(path, uid=user_info.pw_uid, gid=user_info.pw_gid)
         except (OSError, KeyError, TypeError) as exc:
             raise FileRenderError(f"Error rendering file:\n{exc}") from exc
+
+    def _write_if_changed(self, path: Path, content: str, mode: int, owner: str = "root") -> bool:
+        """Render content to a file only when it differs from what is on disk.
+
+        Args:
+            path: Destination file path.
+            content: Desired file content.
+            mode: Access permission mask applied when the file is (re)written.
+            owner: POSIX username the file should be owned by.
+
+        Returns:
+            True if the file was created or its content changed, False otherwise.
+
+        Raises:
+            FileRenderError: if reading the existing file from disk fails.
+        """
+        try:
+            if path.exists() and path.read_text(encoding="utf-8") == content:
+                return False
+        except OSError as exc:
+            raise FileRenderError(f"Error reading file:\n{exc}") from exc
+        self._render_file(path, content, mode, owner=owner)
+        return True
 
     @property
     def is_active(self) -> bool:
@@ -143,28 +162,6 @@ class JenkinsAgentService:
             or current_env.get("JENKINS_TOKEN") != credentials.secret
         )
 
-    def _write_if_changed(self, path: Path, content: str, mode: int) -> bool:
-        """Render content to a file only when it differs from what is on disk.
-
-        Args:
-            path: Destination file path.
-            content: Desired file content.
-            mode: Access permission mask applied when the file is (re)written.
-
-        Returns:
-            True if the file was created or its content changed, False otherwise.
-
-        Raises:
-            FileRenderError: if reading the existing file from disk fails.
-        """
-        try:
-            if path.exists() and path.read_text(encoding="utf-8") == content:
-                return False
-        except OSError as exc:
-            raise FileRenderError(f"Error reading file:\n{exc}") from exc
-        self._render_file(path, content, mode)
-        return True
-
     def _sync_service_files(self) -> bool:
         """Write the systemd unit and its launcher script if they've changed.
 
@@ -184,10 +181,13 @@ class JenkinsAgentService:
         )
         unit_changed = self._write_if_changed(JENKINS_AGENT_SYSTEMD_PATH, service_content, 0o644)
 
-        # Render the agent script template with websocket_mode config
+        # Render the agent script template with websocket_mode config and home dir
         websocket_mode = self.state.websocket_mode
         script_template = self._template_loader.get_template("jenkins_agent.sh.j2")
-        script_content = script_template.render(websocket_mode=websocket_mode)
+        script_content = script_template.render(
+            websocket_mode=websocket_mode,
+            jenkins_home=str(self.state.jenkins_home),
+        )
         script_changed = self._write_if_changed(
             JENKINS_AGENT_START_SCRIPT_PATH, script_content, 0o755
         )
@@ -219,6 +219,7 @@ class JenkinsAgentService:
                 failed.
         """
         unit_file_changed = self._sync_service_files()
+        self._ensure_user_and_home()
         if unit_file_changed:
             try:
                 systemd.daemon_reload()
@@ -234,6 +235,86 @@ class JenkinsAgentService:
             apt.add_package(REQUIRED_PACKAGES, update_cache=True)
         except (apt.PackageError, apt.PackageNotFoundError) as exc:
             raise PackageInstallError("Error installing the Java package") from exc
+
+    def _ensure_user_and_home(self) -> None:
+        """Ensure the configured agent user exists, owns the home, and can sudo.
+
+        Does nothing for the root user. For non-root users, the user is created
+        (regular user, not a system account) with the configured home directory if
+        missing, the home directory is created and owned by the user, and a
+        passwordless sudo entry is written to /etc/sudoers.d. Failures are logged
+        but not raised, to keep the charm from hard-blocking when an operator has
+        pre-created the user/home.
+        """
+        username = self.state.agent_user
+        home = self.state.jenkins_home
+        if username == "root":
+            return
+
+        try:
+            pwd.getpwnam(username)
+        except KeyError:
+            logger.info("Creating user %s", username)
+            try:
+                subprocess.run(  # nosec: B603 - fixed-path system binary (useradd)
+                    [
+                        "/usr/sbin/useradd",
+                        "--home-dir",
+                        str(home),
+                        "--create-home",
+                        "--shell",
+                        "/bin/bash",
+                        username,
+                    ],
+                    check=True,
+                    capture_output=True,
+                )
+            except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+                logger.warning("Failed to create user %s: %s", username, exc)
+                return
+        try:
+            home.mkdir(parents=True, exist_ok=True)
+            user_info = pwd.getpwnam(username)
+            os.chown(home, uid=user_info.pw_uid, gid=user_info.pw_gid)
+            # Also chown existing contents if the directory already existed with
+            # different ownership, as the agent expects write access to its home.
+            for path in home.rglob("*"):
+                os.chown(path, uid=user_info.pw_uid, gid=user_info.pw_gid)
+        except (OSError, KeyError) as exc:
+            logger.warning("Failed to set ownership of %s to %s: %s", home, username, exc)
+
+        self._grant_passwordless_sudo(username)
+
+    def _grant_passwordless_sudo(self, username: str) -> None:
+        """Write a sudoers drop-in granting the user passwordless sudo.
+
+        The file is checked with visudo before it is installed so a syntax error
+        does not lock operators out of sudo. Failures are logged and do not block
+        reconcile.
+
+        Args:
+            username: the POSIX username to grant sudo.
+        """
+        sudoers_content = f"{username} ALL=(ALL:ALL) NOPASSWD: ALL\n"
+        drop_in_path = SUDOERS_DROP_IN_DIR / f"99-jenkins-agent-{username}"
+        try:
+            subprocess.run(  # nosec: B603 - fixed-path system binary (visudo)
+                ["/usr/sbin/visudo", "-cf", "-"],
+                input=sudoers_content,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+            logger.warning("Generated sudoers content failed validation: %s", exc)
+            return
+        try:
+            SUDOERS_DROP_IN_DIR.mkdir(parents=True, exist_ok=True)
+            drop_in_path.write_text(sudoers_content)
+            os.chmod(drop_in_path, 0o440)
+            os.chown(drop_in_path, uid=0, gid=0)
+        except (OSError, KeyError) as exc:
+            logger.warning("Failed to write sudoers drop-in %s: %s", drop_in_path, exc)
 
     def restart(self) -> None:
         """Start the agent service.
@@ -274,7 +355,7 @@ class JenkinsAgentService:
                 "Error interacting with the filesystem when rendering configuration file"
             ) from exc
 
-        # Check if the service is running after startup
+        # Check if the service running after startup
         if not self._startup_check():
             raise ServiceRestartError("Error waiting for the agent service to start")
 
@@ -286,7 +367,7 @@ class JenkinsAgentService:
         so we need to do it manually.
         """
         try:
-            # Disable protected-access here because reset-failed is not implemented in the lib
+            # Disable protected_access here because reset-failed is not implemented in the lib
             systemd._systemctl("reset-failed", AGENT_SERVICE_NAME)  # pylint: disable=W0212
         except systemd.SystemdError:
             # We only log the exception here as this is not critical

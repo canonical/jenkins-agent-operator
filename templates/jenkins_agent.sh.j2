@@ -16,7 +16,7 @@ set -eu -o pipefail
 export LC_ALL=C
 export TERM=xterm
 
-readonly JENKINS_HOME="/var/lib/jenkins"
+JENKINS_HOME="${JENKINS_HOME:-{{ jenkins_home|default('/var/lib/jenkins', true) }}}"
 
 info "Installing on arch: $(uname -m)"
 

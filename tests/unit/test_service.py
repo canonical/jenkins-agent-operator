@@ -7,7 +7,12 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import pwd
+
+# Bandit flags subprocess in tests; it is only used to build command lists for unit-test mocks.
+import subprocess  # nosec: B404
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
@@ -26,7 +31,11 @@ if TYPE_CHECKING:
 
 
 def _mock_install_host(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, package_installed: bool = False
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    package_installed: bool = False,
+    mock_fs_ownership: bool = True,
 ) -> SimpleNamespace:
     """Mock host syscalls so JenkinsAgentService.install runs off-host.
 
@@ -34,6 +43,9 @@ def _mock_install_host(
         monkeypatch: pytest monkeypatch fixture.
         tmp_path: temporary directory the service files are written to.
         package_installed: whether the required apt package is already present.
+        mock_fs_ownership: whether to mock os.chmod/os.chown. Disabling it leaves
+            os.chmod untouched but still stubs os.chown, so tests can assert real
+            filesystem writes without requiring root privileges to change owners.
 
     Returns:
         Namespace of the patched systemd entry points (daemon_reload, service_enable)
@@ -43,8 +55,11 @@ def _mock_install_host(
     script_path = tmp_path / "jenkins-agent"
     monkeypatch.setattr(service, "JENKINS_AGENT_SYSTEMD_PATH", unit_path)
     monkeypatch.setattr(service, "JENKINS_AGENT_START_SCRIPT_PATH", script_path)
-    monkeypatch.setattr(os, "chmod", MagicMock())
-    monkeypatch.setattr(os, "chown", MagicMock())
+    if mock_fs_ownership:
+        monkeypatch.setattr(os, "chmod", MagicMock())
+        monkeypatch.setattr(os, "chown", MagicMock())
+    else:
+        monkeypatch.setattr(os, "chown", MagicMock())
     daemon_reload = MagicMock()
     service_enable = MagicMock()
     monkeypatch.setattr(systemd, "daemon_reload", daemon_reload)
@@ -101,7 +116,7 @@ def test_on_install(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatc
     # The package is absent (mock always raises), so every reconcile installs it
     # with the expected package list.
     assert apt_add_package_mock.call_count >= 1
-    assert apt_add_package_mock.call_args_list[0][0][0] == ["openjdk-21-jre"]
+    assert apt_add_package_mock.call_args_list[0][0][0] == ["openjdk-21-jre", "sudo"]
     # The unit file is newly written, so the service is reloaded and enabled for
     # automatic start on reboot.
     assert host.service_enable.call_count >= 1
@@ -179,8 +194,8 @@ def test_install_renders_user_and_workdir(
     harness.begin_with_initial_hooks()
     unit_text = host.unit_path.read_text()
 
-    assert "User=root" in unit_text
-    assert "Group=root" in unit_text
+    assert "User=jenkins" in unit_text
+    assert "Group=jenkins" in unit_text
     assert "WorkingDirectory=/var/lib/jenkins" in unit_text
     assert 'Environment="JENKINS_HOME=/var/lib/jenkins"' in unit_text
 
@@ -206,6 +221,263 @@ def test_install_renders_custom_user_and_workdir(
     assert "WorkingDirectory=/srv/jenkins" in unit_text
     assert 'Environment="JENKINS_HOME=/srv/jenkins"' in unit_text
     assert "ExecStopPost=rm -rf /srv/jenkins/.ready" in unit_text
+
+
+def test_install_renders_script_with_jenkins_home(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """
+    arrange: Harness with patched install paths and templates.
+    act: run the install hook.
+    assert: the launcher script references the configured JENKINS_HOME.
+    """
+    host = _mock_install_host(monkeypatch, tmp_path)
+    apt_add_package_mock = MagicMock()
+    monkeypatch.setattr(apt, "add_package", apt_add_package_mock)
+
+    harness.update_config({"jenkins_home": "/srv/jenkins"})
+    harness.begin_with_initial_hooks()
+    script_text = Path(host.script_path).read_text()
+
+    assert 'JENKINS_HOME="${JENKINS_HOME:-/srv/jenkins}"' in script_text
+
+
+def test_install_renders_script_with_default_jenkins_home(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """
+    arrange: Harness without any jenkins_home override.
+    act: run the install hook.
+    assert: the launcher script references the default JENKINS_HOME.
+    """
+    host = _mock_install_host(monkeypatch, tmp_path)
+    apt_add_package_mock = MagicMock()
+    monkeypatch.setattr(apt, "add_package", apt_add_package_mock)
+
+    harness.begin_with_initial_hooks()
+    script_text = Path(host.script_path).read_text()
+
+    assert 'JENKINS_HOME="${JENKINS_HOME:-/var/lib/jenkins}"' in script_text
+
+
+def test_install_creates_user_and_home(
+    harness: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    """
+    arrange: Harness with agent_user=jenkins and jenkins_home pointing inside tmp_path.
+    act: run the install hook.
+    assert: the home directory is created and the charm calls os.chown using the
+        created jenkins uid/gid.
+    """
+    home = tmp_path / "jenkins-home"
+    _mock_install_host(monkeypatch, tmp_path)
+    monkeypatch.setattr(apt, "add_package", MagicMock())
+    _make_fake_useradd(monkeypatch)
+    chown_mock = MagicMock()
+    monkeypatch.setattr(os, "chown", chown_mock)
+
+    harness.update_config({"agent_user": "jenkins", "jenkins_home": str(home)})
+    harness.begin_with_initial_hooks()
+
+    assert home.exists()
+    jenkins_uid = pwd.getpwnam("jenkins").pw_uid
+    jenkins_gid = pwd.getpwnam("jenkins").pw_gid
+    chown_mock.assert_any_call(home, uid=jenkins_uid, gid=jenkins_gid)
+
+
+def test_install_warns_but_continues_on_useradd_failure(
+    harness: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+):
+    """
+    arrange: Harness with agent_user=nonexistent-testuser and useradd mocked to fail.
+    act: run the install hook.
+    assert: the charm emits a warning but does not error.
+    """
+    username = "nonexistent-testuser"
+    home = tmp_path / f"{username}-home"
+    _mock_install_host(monkeypatch, tmp_path)
+    monkeypatch.setattr(apt, "add_package", MagicMock())
+    monkeypatch.setattr(
+        subprocess, "run", MagicMock(side_effect=subprocess.CalledProcessError(1, ["useradd"]))
+    )
+
+    harness.update_config({"agent_user": username, "jenkins_home": str(home)})
+    harness.begin_with_initial_hooks()
+
+    warning_messages = [
+        message for _, level, message in caplog.record_tuples if level == logging.WARNING
+    ]
+    assert any(f"Failed to create user {username}" in message for message in warning_messages)
+
+
+def _make_fake_useradd(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Provide an in-memory useradd that creates entries seen by pwd.getpwnam."""
+    user_db: dict[str, pwd.struct_passwd] = {}
+
+    def fake_run(args, **_kwargs):
+        # Validate expected useradd shape:
+        # /usr/sbin/useradd --home-dir HOME --create-home --shell /bin/bash USER
+        if len(args) < 7 or not args[0].endswith("useradd"):
+            raise subprocess.CalledProcessError(1, args)
+        if "--system" in args:
+            raise subprocess.CalledProcessError(1, args)
+        if "--create-home" not in args or "--shell" not in args or "/bin/bash" not in args:
+            raise subprocess.CalledProcessError(1, args)
+        username = args[-1]
+        try:
+            home = args[args.index("--home-dir") + 1]
+        except (ValueError, IndexError) as exc:
+            raise subprocess.CalledProcessError(1, args) from exc
+        if username in user_db:
+            raise subprocess.CalledProcessError(9, args)
+        # Pick deterministic fake uid/gid based on username hash to avoid collisions.
+        uid = 50000 + hash(username) % 10000
+        gid = uid
+        user_db[username] = pwd.struct_passwd((username, "x", uid, gid, "", home, "/bin/bash"))
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    real_getpwnam = pwd.getpwnam
+
+    def fake_getpwnam(username: str):
+        if username in user_db:
+            return user_db[username]
+        return real_getpwnam(username)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(pwd, "getpwnam", fake_getpwnam)
+
+
+def test_render_file_uses_configured_owner(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """
+    arrange: Harness with agent_user=jenkins and patched install paths.
+    act: run the install hook.
+    assert: the systemd unit and launcher script are chowned to root; the home dir
+        is chowned to jenkins.
+    """
+    from unittest.mock import call
+
+    home = tmp_path / "jenkins-home"
+    host = _mock_install_host(monkeypatch, tmp_path)
+    monkeypatch.setattr(apt, "add_package", MagicMock())
+    _make_fake_useradd(monkeypatch)
+    chown_mock = MagicMock()
+    monkeypatch.setattr(os, "chown", chown_mock)
+
+    harness.update_config({"agent_user": "jenkins", "jenkins_home": str(home)})
+    harness.begin_with_initial_hooks()
+
+    jenkins_uid = pwd.getpwnam("jenkins").pw_uid
+    jenkins_gid = pwd.getpwnam("jenkins").pw_gid
+    assert call(host.unit_path, uid=0, gid=0) in chown_mock.call_args_list
+    assert call(host.script_path, uid=0, gid=0) in chown_mock.call_args_list
+    assert call(home, uid=jenkins_uid, gid=jenkins_gid) in chown_mock.call_args_list
+
+
+def test_ensure_user_chowns_existing_home_contents(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """
+    arrange: Harness with agent_user=jenkins, jenkins_home pre-existing with a file.
+    act: run the install hook.
+    assert: existing contents under the home are chowned to jenkins.
+    """
+    from unittest.mock import call
+
+    home = tmp_path / "jenkins-home"
+    home.mkdir(parents=True)
+    existing = home / "existing.txt"
+    existing.write_text("old")
+    _mock_install_host(monkeypatch, tmp_path)
+    monkeypatch.setattr(apt, "add_package", MagicMock())
+    _make_fake_useradd(monkeypatch)
+    chown_mock = MagicMock()
+    monkeypatch.setattr(os, "chown", chown_mock)
+
+    harness.update_config({"agent_user": "jenkins", "jenkins_home": str(home)})
+    harness.begin_with_initial_hooks()
+
+    jenkins_uid = pwd.getpwnam("jenkins").pw_uid
+    jenkins_gid = pwd.getpwnam("jenkins").pw_gid
+    assert call(existing, uid=jenkins_uid, gid=jenkins_gid) in chown_mock.call_args_list
+    assert call(home, uid=jenkins_uid, gid=jenkins_gid) in chown_mock.call_args_list
+
+
+def test_install_grants_passwordless_sudo(
+    harness: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    """
+    arrange: Harness with agent_user=jenkins and a temporary sudoers.d directory.
+    act: run the install hook.
+    assert: a sudoers drop-in is written with the correct NOPASSWD rule and is
+        owned/mode-ed by root.
+    """
+    home = tmp_path / "jenkins-home"
+    sudoers_d = tmp_path / "sudoers.d"
+    _mock_install_host(monkeypatch, tmp_path, mock_fs_ownership=False)
+    monkeypatch.setattr(apt, "add_package", MagicMock())
+    monkeypatch.setattr(service, "REQUIRED_PACKAGES", [])
+    monkeypatch.setattr(service, "SUDOERS_DROP_IN_DIR", sudoers_d)
+    _make_fake_useradd(monkeypatch)
+
+    real_subprocess_run = subprocess.run
+
+    def fake_subprocess(args, **kwargs):
+        if args and args[0].endswith("visudo"):
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return real_subprocess_run(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", fake_subprocess)
+
+    harness.update_config({"agent_user": "jenkins", "jenkins_home": str(home)})
+    harness.begin_with_initial_hooks()
+
+    drop_in_path = sudoers_d / "99-jenkins-agent-jenkins"
+    assert drop_in_path.exists()
+    assert drop_in_path.read_text() == "jenkins ALL=(ALL:ALL) NOPASSWD: ALL\n"
+
+
+def test_install_warns_on_visudo_failure(
+    harness: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+):
+    """
+    arrange: Harness where visudo rejects the generated sudoers content.
+    act: run the install hook.
+    assert: a warning is logged and reconcile does not raise.
+    """
+    home = tmp_path / "jenkins-home"
+    _mock_install_host(monkeypatch, tmp_path)
+    monkeypatch.setattr(apt, "add_package", MagicMock())
+    monkeypatch.setattr(service, "REQUIRED_PACKAGES", [])
+    _make_fake_useradd(monkeypatch)
+
+    real_subprocess_run = subprocess.run
+
+    def fake_subprocess(args, **kwargs):
+        if args and args[0].endswith("visudo"):
+            raise subprocess.CalledProcessError(1, args)
+        return real_subprocess_run(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", fake_subprocess)
+
+    harness.update_config({"agent_user": "jenkins", "jenkins_home": str(home)})
+    harness.begin_with_initial_hooks()
+
+    warning_messages = [
+        message for _, level, message in caplog.record_tuples if level == logging.WARNING
+    ]
+    assert any("sudoers content failed validation" in message for message in warning_messages)
 
 
 def test_restart_service(
