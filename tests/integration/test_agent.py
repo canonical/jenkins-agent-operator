@@ -14,6 +14,7 @@ import jubilant
 import pytest
 import requests
 from jubilant._juju import CLIError
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 logger = logging.getLogger()
 
@@ -67,6 +68,26 @@ def active_agent_fixture(
     return jenkins_agent_application
 
 
+@retry(
+    retry=retry_if_exception_type(
+        (
+            jenkinsapi.custom_exceptions.JenkinsAPIException,
+            requests.exceptions.RequestException,
+        )
+    ),
+    stop=stop_after_attempt(10),
+    wait=wait_fixed(5),
+    reraise=True,
+)
+def _initialize_jenkins_client(
+    url: str, password: str
+) -> jenkinsapi.jenkins.Jenkins:
+    """Initialize a Jenkins client, retrying while the server becomes ready."""
+    return jenkinsapi.jenkins.Jenkins(
+        baseurl=url, username="admin", password=password, timeout=60
+    )
+
+
 def _fresh_server_client(
     microk8s_juju: jubilant.Juju, traefik_k8s_application: str
 ) -> jenkinsapi.jenkins.Jenkins:
@@ -84,23 +105,13 @@ def _fresh_server_client(
     password = admin_result.results.get("password", "")
     assert password, "Failed to get admin password"
 
-    client: jenkinsapi.jenkins.Jenkins | None = None
-    last_err: Exception | None = None
-    for attempt in range(1, 11):
-        try:
-            client = jenkinsapi.jenkins.Jenkins(
-                baseurl=url, username="admin", password=password, timeout=60
-            )
-            return client
-        except (
-            jenkinsapi.custom_exceptions.JenkinsAPIException,
-            requests.exceptions.RequestException,
-        ) as exc:
-            last_err = exc
-            logger.warning("Jenkins API not ready (attempt %d/10) via %s: %s", attempt, url, exc)
-            time.sleep(5)
-    assert client is not None  # unreachable; type narrow for pyright
-    raise AssertionError(f"Jenkins API not ready via {url} after retries: {last_err}")
+    try:
+        return _initialize_jenkins_client(url, password)
+    except (
+        jenkinsapi.custom_exceptions.JenkinsAPIException,
+        requests.exceptions.RequestException,
+    ) as exc:
+        raise AssertionError(f"Jenkins API not ready via {url} after retries: {exc}") from exc
 
 
 def assert_job_success(
@@ -115,23 +126,6 @@ def assert_job_success(
     """
     job = client.create_job(agent_name, _gen_test_job_xml(test_target_label))
     queue_item = job.invoke()
-    try:
-        queue_item.poll()
-        node = client.get_node(agent_name)
-        logger.info(
-            "Queued Jenkins job %s: queue_id=%s age=%.1fs why=%r blocked=%s "
-            "stuck=%s buildable=%s agent_online=%s",
-            job.name,
-            queue_item.queue_id,
-            queue_item.get_age(),
-            queue_item.why,
-            queue_item.is_blocked,
-            queue_item.is_stuck,
-            queue_item.is_buildable,
-            node.is_online(),
-        )
-    except Exception as exc:  # nosec B110 - diagnostics must not mask the test result
-        logger.warning("Unable to collect Jenkins queue diagnostics: %s", exc)
     queue_item.block_until_complete()
     build: jenkinsapi.build.Build = queue_item.get_build()
     assert build.get_status() == "SUCCESS"
@@ -225,12 +219,7 @@ def test_agent_reconnects_after_server_refresh(
     password = result.results.get("password", "")
     assert password, "Failed to get admin password after refresh"
 
-    new_client = jenkinsapi.jenkins.Jenkins(
-        baseurl=f"http://{new_address}:8080",
-        username="admin",
-        password=password,
-        timeout=60,
-    )
+    new_client = _initialize_jenkins_client(f"http://{new_address}:8080", password)
 
     # Wait for agent to reconnect (the charm should detect the URL change and restart).
     juju.wait(jubilant.all_agents_idle, timeout=60 * 5)
@@ -273,63 +262,6 @@ def test_agent_traefik_ingress(
       - logs do NOT show "port:50000 is not reachable" (the bug from issue #165)
       - agent can execute jobs successfully (functional verification)
     """
-    # ruff: noqa: C901
-    # Diagnostic-heavy test; complexity comes from explicit failure logging.
-
-    def _dump_diagnostics(client: jenkinsapi.jenkins.Jenkins):
-        """Dump model and application state to aid debugging connection failures."""
-        logger.error("=== Jenkins API connection failure diagnostics ===")
-        logger.error("Jenkins client URL: %s", client.base_server_url())
-        try:
-            logger.error("LXD model status:\n%s", juju.status())
-        except Exception as exc:  # nosec B110
-            logger.error("Failed to dump LXD model status: %s", exc)
-        try:
-            logger.error(
-                "LXD model debug log:\n%s",
-                juju.cli("debug-log", "--replay", "--no-tail", "--limit", "200"),
-            )
-        except Exception as exc:  # nosec B110
-            logger.error("Failed to dump LXD model debug log: %s", exc)
-        try:
-            logger.error("MicroK8s model status:\n%s", microk8s_juju.status())
-        except Exception as exc:  # nosec B110
-            logger.error("Failed to dump MicroK8s model status: %s", exc)
-        try:
-            logger.error(
-                "MicroK8s model debug log:\n%s",
-                microk8s_juju.cli("debug-log", "--replay", "--no-tail", "--limit", "200"),
-            )
-        except Exception as exc:  # nosec B110
-            logger.error("Failed to dump MicroK8s model debug log: %s", exc)
-        try:
-            traefik_status = microk8s_juju.run(
-                f"{traefik_k8s_application}/0", "show-proxied-endpoints"
-            )
-            logger.error("Traefik proxied endpoints:\n%s", traefik_status)
-        except Exception as exc:  # nosec B110
-            logger.error("Failed to dump traefik proxied endpoints: %s", exc)
-        logger.error("=== end diagnostics ===")
-
-    def _run_test_job(client: jenkinsapi.jenkins.Jenkins, agent_name: str):
-        """Run the Jenkins test job and dump diagnostics on connection failure."""
-        logger.info("Agent %s is online, running test job...", agent_name)
-        try:
-            assert_job_success(
-                client=client,
-                agent_name=agent_name,
-                test_target_label="machine",
-            )
-        except requests.exceptions.ConnectionError as exc:
-            _dump_diagnostics(client)
-            raise AssertionError(
-                f"Jenkins API connection failed while running test job against "
-                f"{client.base_server_url()}: {exc}"
-            ) from exc
-        logger.info(
-            "✓ Traefik ingress test passed: agent connected via WebSocket and executed job"
-        )
-
     # Relate agent to ingressed Jenkins server (if not already related)
     logger.info("Ensuring jenkins-agent is related to ingressed jenkins-k8s...")
     try:
@@ -391,27 +323,12 @@ def test_agent_traefik_ingress(
     # Use a client routed through the Traefik ingress: it survives pod restarts
     # and balancer-side readiness, unlike the module-scoped pod-IP client.
     fresh_client = _fresh_server_client(microk8s_juju, traefik_k8s_application)
-    try:
-        nodes = fresh_client.get_nodes()
-
-        agent_nodes = [node for node in nodes.values() if jenkins_agent_application in node.name]
-        assert len(agent_nodes) == 1, f"Expected one agent node, found {len(agent_nodes)}"
-        agent_name = agent_nodes[0].name
-
-        _run_test_job(fresh_client, agent_name)
-    except jenkinsapi.custom_exceptions.JenkinsAPIException as exc:
-        _dump_diagnostics(fresh_client)
-        raise AssertionError(
-            f"Jenkins API wrapper failed while checking agent status: {exc}"
-        ) from exc
-    except requests.exceptions.ConnectionError as exc:
-        _dump_diagnostics(fresh_client)
-        raise AssertionError(
-            f"Jenkins API connection failed while checking agent status: {exc}"
-        ) from exc
-    except requests.exceptions.HTTPError as e:
-        # Jenkins API access may be limited through ingress - the core test (WebSocket connection) passed
-        logger.warning("Jenkins API access limited through ingress (expected): %s", e)
-        logger.info(
-            "✓ Traefik ingress test passed: agent connected via WebSocket (job execution skipped)"
-        )
+    nodes = fresh_client.get_nodes()
+    agent_nodes = [node for node in nodes.values() if jenkins_agent_application in node.name]
+    assert len(agent_nodes) == 1, f"Expected one agent node, found {len(agent_nodes)}"
+    agent_name = agent_nodes[0].name
+    assert_job_success(
+        client=fresh_client,
+        agent_name=agent_name,
+        test_target_label="machine",
+    )
