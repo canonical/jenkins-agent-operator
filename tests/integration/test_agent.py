@@ -77,14 +77,10 @@ def _fresh_server_client(
     ready backends, so it is the stable target. Retry the first poll to absorb
     any residual readiness race.
     """
-    result = microk8s_juju.run(
-        f"{traefik_k8s_application}/0", "show-proxied-endpoints"
-    )
+    result = microk8s_juju.run(f"{traefik_k8s_application}/0", "show-proxied-endpoints")
     proxied = json.loads(result.results["proxied-endpoints"])
     url = proxied[JENKINS_APPLICATION_NAME]["url"]
-    admin_result = microk8s_juju.run(
-        f"{JENKINS_APPLICATION_NAME}/0", "get-admin-password"
-    )
+    admin_result = microk8s_juju.run(f"{JENKINS_APPLICATION_NAME}/0", "get-admin-password")
     password = admin_result.results.get("password", "")
     assert password, "Failed to get admin password"
 
@@ -96,11 +92,12 @@ def _fresh_server_client(
                 baseurl=url, username="admin", password=password, timeout=60
             )
             return client
-        except (jenkinsapi.custom_exceptions.JenkinsAPIException, requests.exceptions.RequestException) as exc:
+        except (
+            jenkinsapi.custom_exceptions.JenkinsAPIException,
+            requests.exceptions.RequestException,
+        ) as exc:
             last_err = exc
-            logger.warning(
-                "Jenkins API not ready (attempt %d/10) via %s: %s", attempt, url, exc
-            )
+            logger.warning("Jenkins API not ready (attempt %d/10) via %s: %s", attempt, url, exc)
             time.sleep(5)
     assert client is not None  # unreachable; type narrow for pyright
     raise AssertionError(f"Jenkins API not ready via {url} after retries: {last_err}")
