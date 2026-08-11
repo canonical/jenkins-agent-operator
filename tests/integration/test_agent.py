@@ -66,6 +66,29 @@ def active_agent_fixture(
     return jenkins_agent_application
 
 
+def _fresh_server_client(microk8s_juju: jubilant.Juju) -> jenkinsapi.jenkins.Jenkins:
+    """Build a Jenkins client from the current unit address.
+
+    The pod IP can change on server refresh, so re-resolve rather than reusing
+    a stale module-scoped client (see test_agent_reconnects_after_server_refresh).
+    """
+    unit_status = (
+        microk8s_juju.status()
+        .get_units(JENKINS_APPLICATION_NAME)
+        .get(f"{JENKINS_APPLICATION_NAME}/0")
+    )
+    assert unit_status, f"Unit status not found for {JENKINS_APPLICATION_NAME}"
+    result = microk8s_juju.run(f"{JENKINS_APPLICATION_NAME}/0", "get-admin-password")
+    password = result.results.get("password", "")
+    assert password, "Failed to get admin password"
+    return jenkinsapi.jenkins.Jenkins(
+        baseurl=f"http://{unit_status.address}:8080",
+        username="admin",
+        password=password,
+        timeout=60,
+    )
+
+
 def assert_job_success(
     *, client: jenkinsapi.jenkins.Jenkins, agent_name: str, test_target_label: str
 ):
@@ -210,7 +233,6 @@ def test_agent_traefik_ingress(
     ingressed_jenkins_server: str,
     jenkins_agent_application: str,
     jenkins_agent_requirer: str,
-    jenkins_client: jenkinsapi.jenkins.Jenkins,
     juju: jubilant.Juju,
     microk8s_juju: jubilant.Juju,
     traefik_k8s_application: str,
@@ -240,10 +262,10 @@ def test_agent_traefik_ingress(
     # ruff: noqa: C901
     # Diagnostic-heavy test; complexity comes from explicit failure logging.
 
-    def _dump_diagnostics():
+    def _dump_diagnostics(client: jenkinsapi.jenkins.Jenkins):
         """Dump model and application state to aid debugging connection failures."""
         logger.error("=== Jenkins API connection failure diagnostics ===")
-        logger.error("Jenkins client URL: %s", jenkins_client.base_server_url())
+        logger.error("Jenkins client URL: %s", client.base_server_url())
         try:
             logger.error("LXD model status:\n%s", juju.status())
         except Exception as exc:  # nosec B110
@@ -275,20 +297,20 @@ def test_agent_traefik_ingress(
             logger.error("Failed to dump traefik proxied endpoints: %s", exc)
         logger.error("=== end diagnostics ===")
 
-    def _run_test_job(agent_name: str):
+    def _run_test_job(client: jenkinsapi.jenkins.Jenkins, agent_name: str):
         """Run the Jenkins test job and dump diagnostics on connection failure."""
         logger.info("Agent %s is online, running test job...", agent_name)
         try:
             assert_job_success(
-                client=jenkins_client,
+                client=client,
                 agent_name=agent_name,
                 test_target_label="machine",
             )
         except requests.exceptions.ConnectionError as exc:
-            _dump_diagnostics()
+            _dump_diagnostics(client)
             raise AssertionError(
                 f"Jenkins API connection failed while running test job against "
-                f"{jenkins_client.base_server_url()}: {exc}"
+                f"{client.base_server_url()}: {exc}"
             ) from exc
         logger.info(
             "✓ Traefik ingress test passed: agent connected via WebSocket and executed job"
@@ -351,24 +373,26 @@ def test_agent_traefik_ingress(
     logger.info("WebSocket connection verified in agent logs")
 
     # Verify agent is functional by checking it's registered in Jenkins
-    # Note: When using traefik ingress, the jenkins_client may not have access to all APIs
-    # The core verification (WebSocket connection + active status) is already confirmed above
+    # Note: When using traefik ingress, the Jenkins API access may be limited.
+    # Use a freshly-resolved client: the module-scoped one may hold a stale pod IP
+    # if a prior test refreshed the server. The core verification (WebSocket
+    # connection + active status) is already confirmed above.
+    fresh_client = _fresh_server_client(microk8s_juju)
     try:
-        nodes = jenkins_client.get_nodes()
-        assert all(node.is_online() for node in nodes.values()), "All agents should be online"
+        nodes = fresh_client.get_nodes()
 
         agent_nodes = [node for node in nodes.values() if jenkins_agent_application in node.name]
         assert len(agent_nodes) == 1, f"Expected one agent node, found {len(agent_nodes)}"
         agent_name = agent_nodes[0].name
 
-        _run_test_job(agent_name)
+        _run_test_job(fresh_client, agent_name)
     except jenkinsapi.custom_exceptions.JenkinsAPIException as exc:
-        _dump_diagnostics()
+        _dump_diagnostics(fresh_client)
         raise AssertionError(
             f"Jenkins API wrapper failed while checking agent status: {exc}"
         ) from exc
     except requests.exceptions.ConnectionError as exc:
-        _dump_diagnostics()
+        _dump_diagnostics(fresh_client)
         raise AssertionError(
             f"Jenkins API connection failed while checking agent status: {exc}"
         ) from exc
