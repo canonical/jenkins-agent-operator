@@ -14,6 +14,7 @@ import jubilant
 import pytest
 import requests
 from jubilant._juju import CLIError
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 logger = logging.getLogger()
 
@@ -67,6 +68,21 @@ def active_agent_fixture(
     return jenkins_agent_application
 
 
+@retry(
+    retry=retry_if_exception_type(
+        (jenkinsapi.custom_exceptions.JenkinsAPIException, requests.exceptions.RequestException)
+    ),
+    stop=stop_after_attempt(10),
+    wait=wait_fixed(5),
+    reraise=True,
+)
+def _initialize_client(url: str, password: str) -> jenkinsapi.jenkins.Jenkins:
+    """Initialize a Jenkins API client, retrying until the server is ready."""
+    return jenkinsapi.jenkins.Jenkins(
+        baseurl=url, username="admin", password=password, timeout=60
+    )
+
+
 def _fresh_server_client(
     microk8s_juju: jubilant.Juju, traefik_k8s_application: str
 ) -> jenkinsapi.jenkins.Jenkins:
@@ -84,23 +100,7 @@ def _fresh_server_client(
     password = admin_result.results.get("password", "")
     assert password, "Failed to get admin password"
 
-    client: jenkinsapi.jenkins.Jenkins | None = None
-    last_err: Exception | None = None
-    for attempt in range(1, 11):
-        try:
-            client = jenkinsapi.jenkins.Jenkins(
-                baseurl=url, username="admin", password=password, timeout=60
-            )
-            return client
-        except (
-            jenkinsapi.custom_exceptions.JenkinsAPIException,
-            requests.exceptions.RequestException,
-        ) as exc:
-            last_err = exc
-            logger.warning("Jenkins API not ready (attempt %d/10) via %s: %s", attempt, url, exc)
-            time.sleep(5)
-    assert client is not None  # unreachable; type narrow for pyright
-    raise AssertionError(f"Jenkins API not ready via {url} after retries: {last_err}")
+    return _initialize_client(url, password)
 
 
 def assert_job_success(
