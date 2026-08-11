@@ -16,7 +16,7 @@ import subprocess  # nosec: B404
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, PropertyMock
+from unittest.mock import MagicMock, PropertyMock, call
 
 import ops.testing
 import pytest
@@ -24,7 +24,7 @@ from charms.operator_libs_linux.v0 import apt
 from charms.operator_libs_linux.v1 import systemd
 
 import service
-from charm_state import AGENT_RELATION
+from charm_state import AGENT_RELATION, Credentials
 
 if TYPE_CHECKING:
     from charm import JenkinsAgentCharm
@@ -361,8 +361,6 @@ def test_render_file_uses_configured_owner(
     assert: the systemd unit and launcher script are chowned to root; the home dir
         is chowned to jenkins.
     """
-    from unittest.mock import call
-
     home = tmp_path / "jenkins-home"
     host = _mock_install_host(monkeypatch, tmp_path)
     monkeypatch.setattr(apt, "add_package", MagicMock())
@@ -388,8 +386,6 @@ def test_ensure_user_chowns_existing_home_contents(
     act: run the install hook.
     assert: existing contents under the home are chowned to jenkins.
     """
-    from unittest.mock import call
-
     home = tmp_path / "jenkins-home"
     home.mkdir(parents=True)
     existing = home / "existing.txt"
@@ -661,8 +657,6 @@ def test_credentials_changed(
     )
     harness.begin()
     charm: JenkinsAgentCharm = harness.charm
-    from charm_state import Credentials
-
     result = charm.jenkins_agent_service.credentials_changed(
         Credentials(address=cred_url, secret=cred_secret)
     )
