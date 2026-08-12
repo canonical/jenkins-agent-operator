@@ -20,11 +20,11 @@ JENKINS_HOME="${JENKINS_HOME:-{{ jenkins_home|default('/var/lib/jenkins', true) 
 
 info "Installing on arch: $(uname -m)"
 
-if ! mkdir -p $JENKINS_HOME; then
+if ! mkdir -p -- "$JENKINS_HOME"; then
     err "Error initializing the agent's home directory"
     exit 1
 fi
-cd $JENKINS_HOME
+cd -- "$JENKINS_HOME"
 
 CONFIG_MISSING=false
 if [ -z ${JENKINS_URL+x} ]; then
@@ -46,7 +46,7 @@ if [ "$CONFIG_MISSING" == true ]; then
 fi
 
 info "Fetching the agent binary"
-if ! curl --connect-timeout 1200 "${JENKINS_URL}/jnlpJars/agent.jar" -o ${JENKINS_HOME}/agent.jar; then
+if ! curl --connect-timeout 1200 "${JENKINS_URL}/jnlpJars/agent.jar" -o "${JENKINS_HOME}/agent.jar"; then
     err Unable to download agent binary
     exit 1
 fi
@@ -68,6 +68,6 @@ info "Connecting to jenkins"
 if ! java -jar "${JENKINS_HOME}/agent.jar" -url "${JENKINS_URL}" -name "${JENKINS_AGENT}" -workDir "${JENKINS_HOME}" -noReconnect -secret "${JENKINS_TOKEN}"{% if websocket_mode %} -webSocket{% endif %}; then
     err "Error connecting to jenkins"
     # Remove ready mark if unsuccessful
-    rm $JENKINS_HOME/.ready
+    rm -- "${JENKINS_HOME}/.ready"
     exit 1
 fi

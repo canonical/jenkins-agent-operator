@@ -33,3 +33,22 @@ def test_from_charm_invalid_metadata(
 
     with pytest.raises(charm_state.InvalidStateError, match=r"Invalid executor state\."):
         charm_state.State.from_charm(charm=charm)
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"agent_user": "bad/user"},
+        {"agent_user": "bad user"},
+        {"jenkins_home": "relative/path"},
+        {"jenkins_home": "/"},
+        {"jenkins_home": "/var/lib/../etc/jenkins"},
+    ],
+)
+def test_from_charm_rejects_unsafe_agent_configuration(harness: ops.testing.Harness, config: dict):
+    """Reject user/home values before they reach privileged templates."""
+    harness.update_config(config)
+    harness.begin()
+
+    with pytest.raises(charm_state.InvalidStateError, match=r"Invalid agent configuration"):
+        charm_state.State.from_charm(charm=harness.charm)

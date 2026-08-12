@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import pwd
 
@@ -55,6 +54,16 @@ def _mock_install_host(
     script_path = tmp_path / "jenkins-agent"
     monkeypatch.setattr(service, "JENKINS_AGENT_SYSTEMD_PATH", unit_path)
     monkeypatch.setattr(service, "JENKINS_AGENT_START_SCRIPT_PATH", script_path)
+    monkeypatch.setattr(service, "SUDOERS_DROP_IN_DIR", tmp_path / "sudoers.d")
+
+    real_mkdir = Path.mkdir
+
+    def fake_mkdir(path, *args, **kwargs):
+        if path in {Path("/var/lib/jenkins"), Path("/srv/jenkins")}:
+            return None
+        return real_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", fake_mkdir)
     if mock_fs_ownership:
         monkeypatch.setattr(os, "chmod", MagicMock())
         monkeypatch.setattr(os, "chown", MagicMock())
@@ -68,6 +77,8 @@ def _mock_install_host(
         MagicMock() if package_installed else MagicMock(side_effect=apt.PackageNotFoundError)
     )
     monkeypatch.setattr(apt.DebianPackage, "from_installed_package", from_installed)
+    monkeypatch.setattr(apt, "add_package", MagicMock())
+    _make_fake_useradd(monkeypatch)
     return SimpleNamespace(
         daemon_reload=daemon_reload,
         service_enable=service_enable,
@@ -195,7 +206,7 @@ def test_install_renders_user_and_workdir(
     unit_text = host.unit_path.read_text()
 
     assert "User=jenkins" in unit_text
-    assert "Group=jenkins" in unit_text
+    assert "Group=" not in unit_text
     assert "WorkingDirectory=/var/lib/jenkins" in unit_text
     assert 'Environment="JENKINS_HOME=/var/lib/jenkins"' in unit_text
 
@@ -217,7 +228,7 @@ def test_install_renders_custom_user_and_workdir(
     unit_text = host.unit_path.read_text()
 
     assert "User=jenkins" in unit_text
-    assert "Group=jenkins" in unit_text
+    assert "Group=" not in unit_text
     assert "WorkingDirectory=/srv/jenkins" in unit_text
     assert 'Environment="JENKINS_HOME=/srv/jenkins"' in unit_text
     assert "ExecStopPost=rm -rf /srv/jenkins/.ready" in unit_text
@@ -287,16 +298,15 @@ def test_install_creates_user_and_home(
     chown_mock.assert_any_call(home, uid=jenkins_uid, gid=jenkins_gid)
 
 
-def test_install_warns_but_continues_on_useradd_failure(
+def test_install_fails_on_useradd_failure(
     harness: ops.testing.Harness,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
 ):
     """
     arrange: Harness with agent_user=nonexistent-testuser and useradd mocked to fail.
     act: run the install hook.
-    assert: the charm emits a warning but does not error.
+    assert: the charm reports an installation error.
     """
     username = "nonexistent-testuser"
     home = tmp_path / f"{username}-home"
@@ -307,12 +317,8 @@ def test_install_warns_but_continues_on_useradd_failure(
     )
 
     harness.update_config({"agent_user": username, "jenkins_home": str(home)})
-    harness.begin_with_initial_hooks()
-
-    warning_messages = [
-        message for _, level, message in caplog.record_tuples if level == logging.WARNING
-    ]
-    assert any(f"Failed to create user {username}" in message for message in warning_messages)
+    with pytest.raises(RuntimeError, match=r"Error installing the agent service"):
+        harness.begin_with_initial_hooks()
 
 
 def _make_fake_useradd(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -320,6 +326,8 @@ def _make_fake_useradd(monkeypatch: pytest.MonkeyPatch) -> None:
     user_db: dict[str, pwd.struct_passwd] = {}
 
     def fake_run(args, **_kwargs):
+        if args and args[0].endswith("visudo"):
+            return subprocess.CompletedProcess(args, 0, "", "")
         # Validate expected useradd shape:
         # /usr/sbin/useradd --home-dir HOME --create-home --shell /bin/bash USER
         if len(args) < 7 or not args[0].endswith("useradd"):
@@ -378,13 +386,13 @@ def test_render_file_uses_configured_owner(
     assert call(home, uid=jenkins_uid, gid=jenkins_gid) in chown_mock.call_args_list
 
 
-def test_ensure_user_chowns_existing_home_contents(
+def test_ensure_user_does_not_chown_existing_home_contents(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     """
     arrange: Harness with agent_user=jenkins, jenkins_home pre-existing with a file.
     act: run the install hook.
-    assert: existing contents under the home are chowned to jenkins.
+    assert: only the home directory is chowned to jenkins.
     """
     home = tmp_path / "jenkins-home"
     home.mkdir(parents=True)
@@ -401,7 +409,7 @@ def test_ensure_user_chowns_existing_home_contents(
 
     jenkins_uid = pwd.getpwnam("jenkins").pw_uid
     jenkins_gid = pwd.getpwnam("jenkins").pw_gid
-    assert call(existing, uid=jenkins_uid, gid=jenkins_gid) in chown_mock.call_args_list
+    assert call(existing, uid=jenkins_uid, gid=jenkins_gid) not in chown_mock.call_args_list
     assert call(home, uid=jenkins_uid, gid=jenkins_gid) in chown_mock.call_args_list
 
 
@@ -410,70 +418,18 @@ def test_install_grants_passwordless_sudo(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ):
-    """
-    arrange: Harness with agent_user=jenkins and a temporary sudoers.d directory.
-    act: run the install hook.
-    assert: a sudoers drop-in is written with the correct NOPASSWD rule and is
-        owned/mode-ed by root.
-    """
+    """Write a validated passwordless sudo rule for the configured agent user."""
     home = tmp_path / "jenkins-home"
     sudoers_d = tmp_path / "sudoers.d"
-    _mock_install_host(monkeypatch, tmp_path, mock_fs_ownership=False)
-    monkeypatch.setattr(apt, "add_package", MagicMock())
-    monkeypatch.setattr(service, "REQUIRED_PACKAGES", [])
-    monkeypatch.setattr(service, "SUDOERS_DROP_IN_DIR", sudoers_d)
-    _make_fake_useradd(monkeypatch)
-
-    real_subprocess_run = subprocess.run
-
-    def fake_subprocess(args, **kwargs):
-        if args and args[0].endswith("visudo"):
-            return subprocess.CompletedProcess(args, 0, "", "")
-        return real_subprocess_run(args, **kwargs)
-
-    monkeypatch.setattr(subprocess, "run", fake_subprocess)
-
-    harness.update_config({"agent_user": "jenkins", "jenkins_home": str(home)})
-    harness.begin_with_initial_hooks()
-
-    drop_in_path = sudoers_d / "99-jenkins-agent-jenkins"
-    assert drop_in_path.exists()
-    assert drop_in_path.read_text() == "jenkins ALL=(ALL:ALL) NOPASSWD: ALL\n"
-
-
-def test_install_warns_on_visudo_failure(
-    harness: ops.testing.Harness,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
-):
-    """
-    arrange: Harness where visudo rejects the generated sudoers content.
-    act: run the install hook.
-    assert: a warning is logged and reconcile does not raise.
-    """
-    home = tmp_path / "jenkins-home"
     _mock_install_host(monkeypatch, tmp_path)
-    monkeypatch.setattr(apt, "add_package", MagicMock())
-    monkeypatch.setattr(service, "REQUIRED_PACKAGES", [])
-    _make_fake_useradd(monkeypatch)
-
-    real_subprocess_run = subprocess.run
-
-    def fake_subprocess(args, **kwargs):
-        if args and args[0].endswith("visudo"):
-            raise subprocess.CalledProcessError(1, args)
-        return real_subprocess_run(args, **kwargs)
-
-    monkeypatch.setattr(subprocess, "run", fake_subprocess)
+    monkeypatch.setattr(os, "chmod", MagicMock())
+    monkeypatch.setattr(service, "SUDOERS_DROP_IN_DIR", sudoers_d)
 
     harness.update_config({"agent_user": "jenkins", "jenkins_home": str(home)})
     harness.begin_with_initial_hooks()
 
-    warning_messages = [
-        message for _, level, message in caplog.record_tuples if level == logging.WARNING
-    ]
-    assert any("sudoers content failed validation" in message for message in warning_messages)
+    drop_in_path = sudoers_d / "99-jenkins-agent"
+    assert drop_in_path.read_text() == "jenkins ALL=(ALL:ALL) NOPASSWD: ALL\n"
 
 
 def test_restart_service(
@@ -510,6 +466,22 @@ def test_restart_service(
 
     assert pathlib_write_text_mock.call_args[0][0] == service_configuration_template
     assert charm.unit.status.name == ops.ActiveStatus.name
+
+
+def test_restart_template_preserves_systemd_values(harness: ops.testing.Harness):
+    """Systemd templates must not HTML-escape credentials or URLs."""
+    harness.begin()
+    template = harness.charm.jenkins_agent_service._template_loader.get_template(
+        "jenkins_agent_env.conf.j2"
+    )
+
+    rendered = template.render(
+        environments={"JENKINS_TOKEN": 'a&b<c>"d', "JENKINS_URL": "https://jenkins.test"}
+    )
+
+    assert 'Environment="JENKINS_TOKEN=a&b<c>\\"d"' in rendered
+    with pytest.raises(ValueError, match=r"control characters"):
+        template.render(environments={"JENKINS_TOKEN": "bad\nvalue"})
 
 
 def test_restart_service_write_config_type_error(
@@ -605,6 +577,13 @@ def test_parse_systemd_env():
     }
 
 
+def test_parse_systemd_env_unquotes_values():
+    """Parse the escaping emitted by the systemd environment template."""
+    content = '[Service]\nEnvironment="JENKINS_TOKEN=a%%\\\\b\\"c"'
+
+    assert service._parse_systemd_env(content)["JENKINS_TOKEN"] == 'a%\\b"c'
+
+
 @pytest.mark.parametrize(
     "override_content,cred_url,cred_secret,expected",
     [
@@ -628,6 +607,14 @@ def test_parse_systemd_env():
             "secret123",
             True,
             id="url_differs",
+        ),
+        pytest.param(
+            '[Service]\nEnvironment="JENKINS_TOKEN=a%%\\\\b\\"c"\n'
+            'Environment="JENKINS_URL=http://10.1.69.130:8080"',
+            "http://10.1.69.130:8080",
+            'a%\\b"c',
+            False,
+            id="escaped_credentials",
         ),
     ],
 )
@@ -781,10 +768,9 @@ def test_sync_service_files_read_error(
     act: run install to trigger the file sync.
     assert: FileRenderError is raised when the destination file read fails.
     """
-    unit_path = tmp_path / "jenkins-agent.service"
+    host = _mock_install_host(monkeypatch, tmp_path)
+    unit_path = host.unit_path
     unit_path.write_text("stale")
-    monkeypatch.setattr(service, "JENKINS_AGENT_SYSTEMD_PATH", unit_path)
-    monkeypatch.setattr(service, "JENKINS_AGENT_START_SCRIPT_PATH", tmp_path / "jenkins-agent")
 
     real_read_text = Path.read_text
 

@@ -49,7 +49,10 @@ def _parse_systemd_env(content: str) -> typing.Dict[str, str]:
     for line in content.splitlines():
         match = _SYSTEMD_ENV_PATTERN.match(line.strip())
         if match:
-            env[match.group(1)] = match.group(2)
+            value = match.group(2)
+            env[match.group(1)] = (
+                value.replace('\\"', '"').replace("\\\\", "\\").replace("%%", "%")
+            )
     return env
 
 
@@ -69,6 +72,13 @@ class FileRenderError(Exception):
     """Exception raised when failing to interact with a file in the filesystem."""
 
 
+def _systemd_quote(value: str) -> str:
+    """Escape a value for a double-quoted systemd Environment assignment."""
+    if any(character in value for character in "\x00\r\n"):
+        raise ValueError("systemd environment values cannot contain control characters")
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+
+
 class JenkinsAgentService:
     """Jenkins agent service class.
 
@@ -84,8 +94,14 @@ class JenkinsAgentService:
         """
         self.state = state
         self._template_loader = jinja2.Environment(
-            loader=jinja2.FileSystemLoader("templates"), autoescape=True
+            loader=jinja2.FileSystemLoader("templates"),
+            autoescape=jinja2.select_autoescape(
+                enabled_extensions=("html", "htm", "xml"),
+                default=False,
+                default_for_string=False,
+            ),
         )
+        self._template_loader.filters["systemd_quote"] = _systemd_quote
 
     def _render_file(self, path: Path, content: str, mode: int, owner: str = "root") -> None:
         """Write a file to disk, setting its mode and ownership.
@@ -218,8 +234,14 @@ class JenkinsAgentService:
             PackageInstallError: if enabling the service or installing a package
                 failed.
         """
-        unit_file_changed = self._sync_service_files()
+        if not self._required_packages_installed():
+            try:
+                apt.add_package(REQUIRED_PACKAGES, update_cache=True)
+            except (apt.PackageError, apt.PackageNotFoundError) as exc:
+                raise PackageInstallError("Error installing the required packages") from exc
+
         self._ensure_user_and_home()
+        unit_file_changed = self._sync_service_files()
         if unit_file_changed:
             try:
                 systemd.daemon_reload()
@@ -229,22 +251,14 @@ class JenkinsAgentService:
             except systemd.SystemdError as exc:
                 raise PackageInstallError("Error enabling the agent service") from exc
 
-        if self._required_packages_installed():
-            return
-        try:
-            apt.add_package(REQUIRED_PACKAGES, update_cache=True)
-        except (apt.PackageError, apt.PackageNotFoundError) as exc:
-            raise PackageInstallError("Error installing the Java package") from exc
-
     def _ensure_user_and_home(self) -> None:
         """Ensure the configured agent user exists, owns the home, and can sudo.
 
         Does nothing for the root user. For non-root users, the user is created
         (regular user, not a system account) with the configured home directory if
         missing, the home directory is created and owned by the user, and a
-        passwordless sudo entry is written to /etc/sudoers.d. Failures are logged
-        but not raised, to keep the charm from hard-blocking when an operator has
-        pre-created the user/home.
+        passwordless sudo entry is written to /etc/sudoers.d. Failures raise
+        PackageInstallError so the charm does not enable a broken service.
         """
         username = self.state.agent_user
         home = self.state.jenkins_home
@@ -270,33 +284,22 @@ class JenkinsAgentService:
                     capture_output=True,
                 )
             except (subprocess.CalledProcessError, FileNotFoundError) as exc:
-                logger.warning("Failed to create user %s: %s", username, exc)
-                return
+                raise PackageInstallError(f"Failed to create user {username}") from exc
         try:
+            if home.is_symlink():
+                raise OSError(f"Jenkins home must not be a symbolic link: {home}")
             home.mkdir(parents=True, exist_ok=True)
             user_info = pwd.getpwnam(username)
             os.chown(home, uid=user_info.pw_uid, gid=user_info.pw_gid)
-            # Also chown existing contents if the directory already existed with
-            # different ownership, as the agent expects write access to its home.
-            for path in home.rglob("*"):
-                os.chown(path, uid=user_info.pw_uid, gid=user_info.pw_gid)
         except (OSError, KeyError) as exc:
-            logger.warning("Failed to set ownership of %s to %s: %s", home, username, exc)
+            raise PackageInstallError(f"Failed to prepare Jenkins home {home}") from exc
 
         self._grant_passwordless_sudo(username)
 
     def _grant_passwordless_sudo(self, username: str) -> None:
-        """Write a sudoers drop-in granting the user passwordless sudo.
-
-        The file is checked with visudo before it is installed so a syntax error
-        does not lock operators out of sudo. Failures are logged and do not block
-        reconcile.
-
-        Args:
-            username: the POSIX username to grant sudo.
-        """
+        """Validate and write a passwordless sudo rule for the agent user."""
         sudoers_content = f"{username} ALL=(ALL:ALL) NOPASSWD: ALL\n"
-        drop_in_path = SUDOERS_DROP_IN_DIR / f"99-jenkins-agent-{username}"
+        drop_in_path = SUDOERS_DROP_IN_DIR / "99-jenkins-agent"
         try:
             subprocess.run(  # nosec: B603 - fixed-path system binary (visudo)
                 ["/usr/sbin/visudo", "-cf", "-"],
@@ -306,15 +309,14 @@ class JenkinsAgentService:
                 text=True,
             )
         except (subprocess.CalledProcessError, FileNotFoundError) as exc:
-            logger.warning("Generated sudoers content failed validation: %s", exc)
-            return
+            raise PackageInstallError("Generated sudoers content failed validation") from exc
         try:
             SUDOERS_DROP_IN_DIR.mkdir(parents=True, exist_ok=True)
             drop_in_path.write_text(sudoers_content)
             os.chmod(drop_in_path, 0o440)
             os.chown(drop_in_path, uid=0, gid=0)
         except (OSError, KeyError) as exc:
-            logger.warning("Failed to write sudoers drop-in %s: %s", drop_in_path, exc)
+            raise PackageInstallError(f"Failed to write sudoers drop-in {drop_in_path}") from exc
 
     def restart(self) -> None:
         """Start the agent service.
@@ -342,10 +344,10 @@ class JenkinsAgentService:
         config_dir.mkdir(parents=True, exist_ok=True)
         # Write the conf file
         logger.info("Rendering agent configuration")
-        logger.debug("%s", environments)
+        logger.debug("Rendering agent environment keys: %s", sorted(environments))
         config_file = Path(f"{SYSTEMD_SERVICE_CONF_DIR}/override.conf")
         try:
-            self._render_file(config_file, rendered, 0o644)
+            self._render_file(config_file, rendered, 0o600)
             systemd.daemon_reload()
             systemd.service_restart(AGENT_SERVICE_NAME)
         except systemd.SystemdError as exc:

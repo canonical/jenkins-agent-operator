@@ -5,6 +5,7 @@
 
 import logging
 import os
+import re
 import typing
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,8 @@ from typing_extensions import Literal
 AGENT_RELATION = "agent"
 
 logger = logging.getLogger()
+_AGENT_USER_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]{0,31}\$?$")
+_JENKINS_HOME_PATTERN = re.compile(r"^/[A-Za-z0-9._/-]+$")
 
 
 class Credentials(BaseModel):
@@ -185,6 +188,13 @@ class State:
         jenkins_home = Path(
             str(charm.model.config.get("jenkins_home", "/var/lib/jenkins") or "/var/lib/jenkins")
         )
+        if (
+            not _AGENT_USER_PATTERN.fullmatch(agent_user)
+            or not _JENKINS_HOME_PATTERN.fullmatch(str(jenkins_home))
+            or jenkins_home == Path("/")
+            or ".." in jenkins_home.parts
+        ):
+            raise InvalidStateError("Invalid agent configuration.")
 
         return cls(
             agent_meta=agent_meta,
