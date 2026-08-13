@@ -209,6 +209,8 @@ def test_install_renders_user_and_workdir(
     assert "Group=" not in unit_text
     assert "WorkingDirectory=/var/lib/jenkins" in unit_text
     assert 'Environment="JENKINS_HOME=/var/lib/jenkins"' in unit_text
+    assert 'Environment="HOME=/var/lib/jenkins"' in unit_text
+    assert 'Environment="USER=jenkins"' in unit_text
 
 
 def test_install_renders_custom_user_and_workdir(

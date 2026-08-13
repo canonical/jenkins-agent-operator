@@ -12,6 +12,8 @@ RestartSec=5s
 ExecStart=/usr/bin/jenkins-agent
 ExecStopPost=rm -rf {{ jenkins_home }}/.ready
 Environment="JENKINS_HOME={{ jenkins_home }}"
+Environment="HOME={{ jenkins_home }}"
+Environment="USER={{ agent_user }}"
 
 [Install]
 WantedBy=multi-user.target
