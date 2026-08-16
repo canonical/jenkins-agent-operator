@@ -212,7 +212,13 @@ def jenkins_agent_application_fixture(
         app=JENKINS_AGENT_APPLICATION_NAME,
         num_units=1,
         base=request.param,
-        config={"jenkins_agent_labels": "machine"},
+        # Use non-default values so the integration suite exercises the user/home
+        # configuration against a real unit rather than only checking templates.
+        config={
+            "jenkins_agent_labels": "machine",
+            "agent_user": "jenkins-agent-test",
+            "jenkins_home": "/srv/jenkins-agent",
+        },
         constraints={"arch": arch},
     )
     juju.wait(jubilant.all_agents_idle, timeout=60 * 20)

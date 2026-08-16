@@ -21,8 +21,8 @@ logger = logging.getLogger()
 JENKINS_APPLICATION_NAME = "jenkins-k8s"
 
 
-def _gen_test_job_xml(node_label: str):
-    """Generate a job xml with target node label.
+def _gen_test_job_xml(node_label: str, command: str = 'echo "hello world"'):
+    """Generate a job xml with target node label and shell command.
 
     Args:
         node_label: The node label to assign to job to.
@@ -47,7 +47,7 @@ def _gen_test_job_xml(node_label: str):
             <concurrentBuild>false</concurrentBuild>
             <builders>
                 <hudson.tasks.Shell>
-                    <command>echo "hello world"</command>
+                    <command>{command}</command>
                     <configuredLocalRules/>
                 </hudson.tasks.Shell>
             </builders>
@@ -135,6 +135,35 @@ def test_agent_relation(jenkins_client: jenkinsapi.jenkins.Jenkins, active_agent
         agent_name=agent_name,
         test_target_label="machine",
     )
+
+
+def test_agent_uses_configured_user_and_home(
+    jenkins_client: jenkinsapi.jenkins.Jenkins, active_agent: str
+):
+    """Verify configured agent_user and jenkins_home reach the running process.
+
+    The fixture deploys the charm with non-default values.  Running a job on the
+    agent validates the complete path from charm config through the systemd unit
+    and environment, rather than merely checking rendered files.
+    """
+    nodes = jenkins_client.get_nodes()
+    agent_nodes = [node for node in nodes.values() if active_agent in node.name]
+    assert len(agent_nodes) == 1, f"Expected one agent node, found {len(agent_nodes)}"
+    agent_name = agent_nodes[0].name
+    command = (
+        'printf "agent-user=%s\\njenkins-home=%s\\nworkdir=%s\\n" '
+        '"$(id -un)" "$JENKINS_HOME" "$PWD"'
+    )
+    job_name = f"{agent_name}-configuration"
+    job = jenkins_client.create_job(job_name, _gen_test_job_xml("machine", command))
+    queue_item = job.invoke()
+    queue_item.block_until_complete()
+    build = queue_item.get_build()
+    assert build.get_status() == "SUCCESS"
+    console = build.get_console()
+    assert "agent-user=jenkins-agent-test" in console
+    assert "jenkins-home=/srv/jenkins-agent" in console
+    assert "workdir=/srv/jenkins-agent" in console
 
 
 def _wait_for_agent_online(
