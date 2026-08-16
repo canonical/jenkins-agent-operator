@@ -76,13 +76,7 @@ def active_agent_fixture(
     jenkins_agent_application: str,
     juju: jubilant.Juju,
 ):
-    """Agent related to server and active.
-
-    Jenkins stores a node's workspace root on the controller.  The server
-    charm currently defaults that value to ``/var/lib/jenkins``; align it with
-    the explicitly configured agent home before submitting jobs so a non-root
-    agent is not asked to create a directory it does not own.
-    """
+    """Agent related to server and active."""
     juju.integrate(jenkins_agent_requirer, jenkins_agent_application)
     juju.wait(jubilant.all_active, timeout=60 * 15)
     return jenkins_agent_application
