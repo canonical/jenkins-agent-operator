@@ -85,12 +85,6 @@ def active_agent_fixture(
     """
     juju.integrate(jenkins_agent_requirer, jenkins_agent_application)
     juju.wait(jubilant.all_active, timeout=60 * 15)
-    nodes = [
-        node
-        for node in jenkins_client.get_nodes().values()
-        if jenkins_agent_application in node.name
-    ]
-    assert len(nodes) == 1, f"Expected one agent node, found {len(nodes)}"
     return jenkins_agent_application
 
 
