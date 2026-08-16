@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 JENKINS_APPLICATION_NAME = "jenkins-k8s"
 JENKINS_AGENT_APPLICATION_NAME = "jenkins-agent"
+JENKINS_AGENT_HOME = "/srv/jenkins-agent"
+JENKINS_AGENT_USER = "jenkins-agent-test"
 ANY_CHARM_APPLICATION_NAME = "any-charm"
 
 
@@ -216,8 +218,8 @@ def jenkins_agent_application_fixture(
         # configuration against a real unit rather than only checking templates.
         config={
             "jenkins_agent_labels": "machine",
-            "agent_user": "jenkins-agent-test",
-            "jenkins_home": "/srv/jenkins-agent",
+            "agent_user": JENKINS_AGENT_USER,
+            "jenkins_home": JENKINS_AGENT_HOME,
         },
         constraints={"arch": arch},
     )
@@ -235,7 +237,7 @@ def _register_agent_node(jenkins_client: jenkinsapi.jenkins.Jenkins, model_name:
     agent_node_meta = {
         "num_executors": 1,
         "node_description": "Test JNLP Node on Docker",
-        "remote_fs": "/var/lib/jenkins",
+        "remote_fs": JENKINS_AGENT_HOME,
         "labels": "machine",
         "exclusive": True,
     }

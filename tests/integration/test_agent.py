@@ -19,6 +19,8 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fi
 logger = logging.getLogger()
 
 JENKINS_APPLICATION_NAME = "jenkins-k8s"
+JENKINS_AGENT_HOME = "/srv/jenkins-agent"
+JENKINS_AGENT_USER = "jenkins-agent-test"
 
 
 def _gen_test_job_xml(node_label: str, command: str = 'echo "hello world"'):
@@ -60,11 +62,27 @@ def _gen_test_job_xml(node_label: str, command: str = 'echo "hello world"'):
 
 @pytest.fixture(scope="module", name="active_agent")
 def active_agent_fixture(
-    jenkins_agent_requirer: str, jenkins_agent_application: str, juju: jubilant.Juju
+    jenkins_agent_requirer: str,
+    jenkins_agent_application: str,
+    jenkins_client: jenkinsapi.jenkins.Jenkins,
+    juju: jubilant.Juju,
 ):
-    """Agent related to server and active."""
+    """Agent related to server and active.
+
+    Jenkins stores a node's workspace root on the controller.  The server
+    charm currently defaults that value to ``/var/lib/jenkins``; align it with
+    the explicitly configured agent home before submitting jobs so a non-root
+    agent is not asked to create a directory it does not own.
+    """
     juju.integrate(jenkins_agent_requirer, jenkins_agent_application)
     juju.wait(jubilant.all_active, timeout=60 * 15)
+    nodes = [
+        node
+        for node in jenkins_client.get_nodes().values()
+        if jenkins_agent_application in node.name
+    ]
+    assert len(nodes) == 1, f"Expected one agent node, found {len(nodes)}"
+    nodes[0].set_config_element("remoteFS", JENKINS_AGENT_HOME)
     return jenkins_agent_application
 
 
@@ -161,9 +179,10 @@ def test_agent_uses_configured_user_and_home(
     build = queue_item.get_build()
     assert build.get_status() == "SUCCESS"
     console = build.get_console()
-    assert "agent-user=jenkins-agent-test" in console
-    assert "jenkins-home=/srv/jenkins-agent" in console
-    assert "workdir=/srv/jenkins-agent" in console
+    assert f"agent-user={JENKINS_AGENT_USER}" in console
+    assert f"jenkins-home={JENKINS_AGENT_HOME}" in console
+    # Jenkins runs freestyle jobs in a workspace below the node remote FS.
+    assert f"workdir={JENKINS_AGENT_HOME}/workspace/" in console
 
 
 def _wait_for_agent_online(
@@ -255,6 +274,7 @@ def test_agent_reconnects_after_server_refresh(
 
 def test_agent_traefik_ingress(
     ingressed_jenkins_server: str,
+    active_agent: str,
     jenkins_agent_application: str,
     jenkins_agent_requirer: str,
     juju: jubilant.Juju,
