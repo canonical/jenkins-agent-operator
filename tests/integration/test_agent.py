@@ -83,6 +83,9 @@ def active_agent_fixture(
     ]
     assert len(nodes) == 1, f"Expected one agent node, found {len(nodes)}"
     nodes[0].set_config_element("remoteFS", JENKINS_AGENT_HOME)
+    assert _wait_for_agent_online(jenkins_client, nodes[0].name), (
+        f"Agent {nodes[0].name} did not reconnect after updating remoteFS"
+    )
     return jenkins_agent_application
 
 
@@ -180,8 +183,11 @@ def test_agent_uses_configured_user_and_home(
     queue_item = job.invoke()
     queue_item.block_until_complete()
     build = queue_item.get_build()
-    assert build.get_status() == "SUCCESS"
+    status = build.get_status()
     console = build.get_console()
+    if status != "SUCCESS":
+        logger.error("Jenkins configuration build failed; console:\n%s", console)
+    assert status == "SUCCESS"
     assert f"agent-user={JENKINS_AGENT_USER}" in console
     # Jenkins runs freestyle jobs in a workspace below the node remote FS.
     # The controller may export its own JENKINS_HOME to build processes; the
