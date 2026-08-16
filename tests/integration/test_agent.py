@@ -10,6 +10,7 @@ import time
 
 import jenkinsapi.custom_exceptions
 import jenkinsapi.jenkins
+import jenkinsapi.node
 import jubilant
 import pytest
 import requests
@@ -60,6 +61,15 @@ def _gen_test_job_xml(node_label: str, command: str = 'echo "hello world"'):
     )
 
 
+def _configure_agent_remote_fs(
+    client: jenkinsapi.jenkins.Jenkins, agent_name: str
+) -> jenkinsapi.node.Node:
+    """Set the Jenkins controller workspace root to the configured agent home."""
+    node = client.get_node(agent_name)
+    node.set_config_element("remoteFS", JENKINS_AGENT_HOME)
+    return node
+
+
 @pytest.fixture(scope="module", name="active_agent")
 def active_agent_fixture(
     jenkins_agent_requirer: str,
@@ -82,7 +92,7 @@ def active_agent_fixture(
         if jenkins_agent_application in node.name
     ]
     assert len(nodes) == 1, f"Expected one agent node, found {len(nodes)}"
-    nodes[0].set_config_element("remoteFS", JENKINS_AGENT_HOME)
+    _configure_agent_remote_fs(jenkins_client, nodes[0].name)
     assert _wait_for_agent_online(jenkins_client, nodes[0].name), (
         f"Agent {nodes[0].name} did not reconnect after updating remoteFS"
     )
@@ -149,10 +159,12 @@ def test_agent_relation(jenkins_client: jenkinsapi.jenkins.Jenkins, active_agent
     assert: the agent is able to run job to completion.
     """
     nodes = jenkins_client.get_nodes()
-    assert all(node.is_online() for node in nodes.values())
     agent_nodes = [node for node in nodes.values() if active_agent in node.name]
     assert len(agent_nodes) == 1, f"Expected one agent node, found {len(agent_nodes)}"
     agent_name = agent_nodes[0].name
+    _configure_agent_remote_fs(jenkins_client, agent_name)
+    assert _wait_for_agent_online(jenkins_client, agent_name, timeout=120)
+    assert all(node.is_online() for node in jenkins_client.get_nodes().values())
 
     assert_job_success(
         client=jenkins_client,
@@ -174,6 +186,8 @@ def test_agent_uses_configured_user_and_home(
     agent_nodes = [node for node in nodes.values() if active_agent in node.name]
     assert len(agent_nodes) == 1, f"Expected one agent node, found {len(agent_nodes)}"
     agent_name = agent_nodes[0].name
+    _configure_agent_remote_fs(jenkins_client, agent_name)
+    assert _wait_for_agent_online(jenkins_client, agent_name, timeout=120)
     command = (
         'printf "agent-user=%s\\njenkins-home=%s\\nworkdir=%s\\n" '
         '"$(id -un)" "$JENKINS_HOME" "$PWD"'
@@ -378,6 +392,8 @@ def test_agent_traefik_ingress(
     agent_nodes = [node for node in nodes.values() if jenkins_agent_application in node.name]
     assert len(agent_nodes) == 1, f"Expected one agent node, found {len(agent_nodes)}"
     agent_name = agent_nodes[0].name
+    _configure_agent_remote_fs(fresh_client, agent_name)
+    assert _wait_for_agent_online(fresh_client, agent_name, timeout=120)
     assert_job_success(
         client=fresh_client,
         agent_name=agent_name,
