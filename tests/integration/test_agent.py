@@ -74,11 +74,32 @@ def _configure_agent_remote_fs(
 def active_agent_fixture(
     jenkins_agent_requirer: str,
     jenkins_agent_application: str,
+    jenkins_client: jenkinsapi.jenkins.Jenkins,
     juju: jubilant.Juju,
 ):
     """Agent related to server and active."""
     juju.integrate(jenkins_agent_requirer, jenkins_agent_application)
     juju.wait(jubilant.all_active, timeout=60 * 15)
+    nodes = [
+        node
+        for node in jenkins_client.get_nodes().values()
+        if jenkins_agent_application in node.name
+    ]
+    assert len(nodes) == 1, f"Expected one agent node, found {len(nodes)}"
+    _configure_agent_remote_fs(jenkins_client, nodes[0].name)
+    # Jenkins applies a node's remoteFS when the inbound agent reconnects.
+    juju.cli(
+        "ssh",
+        f"{jenkins_agent_application}/0",
+        "sudo",
+        "systemctl",
+        "restart",
+        "jenkins-agent",
+    )
+    juju.wait(jubilant.all_active, timeout=60 * 15)
+    assert _wait_for_agent_online(jenkins_client, nodes[0].name), (
+        f"Agent {nodes[0].name} did not reconnect after updating remoteFS"
+    )
     return jenkins_agent_application
 
 
