@@ -74,7 +74,6 @@ def _configure_agent_remote_fs(
 def active_agent_fixture(
     jenkins_agent_requirer: str,
     jenkins_agent_application: str,
-    jenkins_client: jenkinsapi.jenkins.Jenkins,
     juju: jubilant.Juju,
 ):
     """Agent related to server and active.
@@ -92,10 +91,6 @@ def active_agent_fixture(
         if jenkins_agent_application in node.name
     ]
     assert len(nodes) == 1, f"Expected one agent node, found {len(nodes)}"
-    _configure_agent_remote_fs(jenkins_client, nodes[0].name)
-    assert _wait_for_agent_online(jenkins_client, nodes[0].name), (
-        f"Agent {nodes[0].name} did not reconnect after updating remoteFS"
-    )
     return jenkins_agent_application
 
 
@@ -163,7 +158,7 @@ def test_agent_relation(jenkins_client: jenkinsapi.jenkins.Jenkins, active_agent
     assert len(agent_nodes) == 1, f"Expected one agent node, found {len(agent_nodes)}"
     agent_name = agent_nodes[0].name
     _configure_agent_remote_fs(jenkins_client, agent_name)
-    assert _wait_for_agent_online(jenkins_client, agent_name, timeout=120)
+    assert jenkins_client.get_node(agent_name).get_config_element("remoteFS") == JENKINS_AGENT_HOME
     assert all(node.is_online() for node in jenkins_client.get_nodes().values())
 
     assert_job_success(
@@ -187,7 +182,7 @@ def test_agent_uses_configured_user_and_home(
     assert len(agent_nodes) == 1, f"Expected one agent node, found {len(agent_nodes)}"
     agent_name = agent_nodes[0].name
     _configure_agent_remote_fs(jenkins_client, agent_name)
-    assert _wait_for_agent_online(jenkins_client, agent_name, timeout=120)
+    assert jenkins_client.get_node(agent_name).get_config_element("remoteFS") == JENKINS_AGENT_HOME
     command = (
         'printf "agent-user=%s\\njenkins-home=%s\\nworkdir=%s\\n" '
         '"$(id -un)" "$JENKINS_HOME" "$PWD"'
@@ -393,7 +388,7 @@ def test_agent_traefik_ingress(
     assert len(agent_nodes) == 1, f"Expected one agent node, found {len(agent_nodes)}"
     agent_name = agent_nodes[0].name
     _configure_agent_remote_fs(fresh_client, agent_name)
-    assert _wait_for_agent_online(fresh_client, agent_name, timeout=120)
+    assert fresh_client.get_node(agent_name).get_config_element("remoteFS") == JENKINS_AGENT_HOME
     assert_job_success(
         client=fresh_client,
         agent_name=agent_name,
