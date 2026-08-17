@@ -190,6 +190,7 @@ def test_agent_relation_added_after_begin_reconciles_credentials(
     harness.begin()
     harness.add_relation(AGENT_RELATION, "jenkins-k8s", unit_data=agent_relation_data)
 
-    assert harness.charm.state.agent_relation_credentials is not None
+    charm = harness.charm
+    assert charm_state.State.from_charm(charm).agent_relation_credentials is not None
     assert service_mocks.restart.call_count == 1
     assert harness.charm.unit.status.name == ops.ActiveStatus.name

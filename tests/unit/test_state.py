@@ -63,4 +63,7 @@ def test_agent_meta_uses_configured_jenkins_home_as_remote_fs(
     harness.begin()
     harness.charm.on.install.emit()
 
-    assert harness.charm.state.agent_meta.as_dict()["remote_fs"] == "/srv/jenkins-agent"
+    assert (
+        charm_state.State.from_charm(harness.charm).agent_meta.as_dict()["remote_fs"]
+        == "/srv/jenkins-agent"
+    )

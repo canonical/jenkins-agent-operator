@@ -48,12 +48,6 @@ class JenkinsAgentCharm(ops.CharmBase):
         try:
             desired_state = State.from_charm(self)
         except InvalidStateError as exc:
-            previous_service = getattr(self, "jenkins_agent_service", None)
-            if previous_service and previous_service.is_running:
-                try:
-                    previous_service.reset()
-                except service.ServiceStopError as stop_exc:
-                    raise RuntimeError("Error stopping the agent service") from stop_exc
             self.unit.status = ops.BlockedStatus(exc.msg)
             return
 
@@ -65,48 +59,51 @@ class JenkinsAgentCharm(ops.CharmBase):
             except service.ServiceStopError as exc:
                 raise RuntimeError("Error stopping the agent service") from exc
 
-        self.state = desired_state
-        self.jenkins_agent_service = desired_service
-        service_files_changed = self._reconcile_installation()
-        self._reconcile_relation_data()
-        self._reconcile_service(service_files_changed=service_files_changed)
+        service_files_changed = self._reconcile_installation(desired_service)
+        self._reconcile_relation_data(desired_state)
+        self._reconcile_service(
+            desired_state, desired_service, service_files_changed=service_files_changed
+        )
 
-    def _reconcile_installation(self) -> bool:
+    def _reconcile_installation(self, agent_service: service.JenkinsAgentService) -> bool:
         """Ensure the agent package and service files are installed and current.
 
+        Args:
+            agent_service: The service built from the current desired state.
+
         Returns:
-            Whether the rendered service files changed and require a restart.
+            Whether rendered service files changed and require a restart.
 
         Raises:
             RuntimeError: when the installation of the agent service fails.
         """
-        if self.jenkins_agent_service is None:
-            raise RuntimeError("Agent service is not initialized")
         try:
-            return self.jenkins_agent_service.install()
+            return agent_service.install()
         except service.PackageInstallError as exc:
             logger.error("Error installing the agent service %s", exc)
             raise RuntimeError("Error installing the agent service") from exc
 
-    def _reconcile_relation_data(self) -> None:
+    def _reconcile_relation_data(self, state: State) -> None:
         """Publish agent metadata to the relation databag when related."""
-        if self.state is None:
-            raise RuntimeError("Agent state is not initialized")
         if agent_relation := self.model.get_relation(AGENT_RELATION):
-            agent_relation.data[self.unit].update(self.state.agent_meta.as_dict())
+            agent_relation.data[self.unit].update(state.agent_meta.as_dict())
 
-    def _reconcile_service(self, service_files_changed: bool = False) -> None:
+    def _reconcile_service(
+        self,
+        state: State,
+        agent_service: service.JenkinsAgentService,
+        service_files_changed: bool = False,
+    ) -> None:
         """Converge the jenkins agent systemd service to the desired state.
 
         Args:
+            state: The current desired charm state.
+            agent_service: The service built from the current desired state.
             service_files_changed: Whether local service configuration changed.
 
         Raises:
             RuntimeError: when the service fails to properly start.
         """
-        if self.jenkins_agent_service is None or self.state is None:
-            raise RuntimeError("Agent state is not initialized")
-        agent_service = self.jenkins_agent_service
         if not self.model.get_relation(AGENT_RELATION):
             if agent_service.is_running:
                 try:
@@ -116,7 +113,7 @@ class JenkinsAgentCharm(ops.CharmBase):
             self.unit.status = ops.BlockedStatus("Waiting for relation.")
             return
 
-        credentials = self.state.agent_relation_credentials
+        credentials = state.agent_relation_credentials
         if not credentials:
             self.unit.status = ops.WaitingStatus("Waiting for complete relation data.")
             logger.info("Waiting for complete relation data.")

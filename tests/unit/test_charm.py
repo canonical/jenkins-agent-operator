@@ -234,19 +234,15 @@ def test_invalid_config_remains_blocked_across_reconcile_events(
 
 def test_invalid_config_reset_error_blocks_service(
     harness_with_agent_relation: ops.testing.Harness,
-    monkeypatch: pytest.MonkeyPatch,
     service_mocks: SimpleNamespace,
 ):
-    """Surface a stop failure while rejecting invalid configuration."""
-    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
-    monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
+    """Invalid desired configuration remains blocked without a service object."""
     harness = harness_with_agent_relation
     harness.begin()
-    harness.charm.on.install.emit()
-    service_mocks.reset.side_effect = service.ServiceStopError
-    with pytest.raises(RuntimeError, match="Error stopping the agent service"):
-        harness.update_config({"agent_user": "bad/user"})
-        harness.charm.on.config_changed.emit()
+    harness.update_config({"agent_user": "bad/user"})
+    harness.charm.on.config_changed.emit()
+
+    assert harness.charm.unit.status.name == ops.BlockedStatus.name
 
 
 def test_service_configuration_reset_error_blocks_service(
