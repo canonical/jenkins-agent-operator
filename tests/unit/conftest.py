@@ -48,13 +48,17 @@ def service_mocks_fixture(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     tests override any attribute (e.g. is_active) as needed.
     """
     mocks = SimpleNamespace(
-        install=MagicMock(),
+        install=MagicMock(return_value=False),
         restart=MagicMock(),
+        is_running=PropertyMock(return_value=False),
         reset=MagicMock(),
         reset_failed_state=MagicMock(),
         credentials_changed=MagicMock(return_value=True),
     )
     monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=False))
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "is_running", PropertyMock(return_value=False)
+    )
     monkeypatch.setattr(service.JenkinsAgentService, "install", mocks.install)
     monkeypatch.setattr(service.JenkinsAgentService, "restart", mocks.restart)
     monkeypatch.setattr(service.JenkinsAgentService, "reset", mocks.reset)

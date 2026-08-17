@@ -42,11 +42,13 @@ class AgentMeta(BaseModel):
         executors: The number of executors available on the unit.
         labels: The comma separated labels to assign to the agent.
         name: The name of the agent.
+        remote_fs: The workspace root Jenkins should use on the agent.
     """
 
     labels: str
     name: str
     executors: int = Field(..., ge=1)
+    remote_fs: str = "/var/lib/jenkins"
 
     def as_dict(self) -> typing.Dict[str, str]:
         """Return dictionary representation of agent metadata.
@@ -58,6 +60,7 @@ class AgentMeta(BaseModel):
             "executors": str(self.executors),
             "labels": self.labels,
             "name": self.name,
+            "remote_fs": self.remote_fs,
         }
 
 
@@ -195,6 +198,8 @@ class State:
             or ".." in jenkins_home.parts
         ):
             raise InvalidStateError("Invalid agent configuration.")
+
+        agent_meta = agent_meta.model_copy(update={"remote_fs": str(jenkins_home)})
 
         return cls(
             agent_meta=agent_meta,

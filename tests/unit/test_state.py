@@ -52,3 +52,15 @@ def test_from_charm_rejects_unsafe_agent_configuration(harness: ops.testing.Harn
 
     with pytest.raises(charm_state.InvalidStateError, match=r"Invalid agent configuration"):
         charm_state.State.from_charm(charm=harness.charm)
+
+
+def test_agent_meta_uses_configured_jenkins_home_as_remote_fs(
+    harness: ops.testing.Harness,
+    service_mocks,
+):
+    """Publish the configured agent home for Jenkins node workspace setup."""
+    harness.update_config({"jenkins_home": "/srv/jenkins-agent"})
+    harness.begin()
+    harness.charm.on.install.emit()
+
+    assert harness.charm.state.agent_meta.as_dict()["remote_fs"] == "/srv/jenkins-agent"

@@ -114,6 +114,7 @@ def test_agent_relation_broken_stops_service(
     assert: The charm stops the service and is blocked waiting for a relation.
     """
     monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
+    monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
     harness = harness_with_agent_relation
     harness.begin()
 
@@ -136,13 +137,59 @@ def test_agent_relation_broken_stop_error(
     assert: The charm is blocked reporting the stop error.
     """
     monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
+    monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
     service_mocks.reset.side_effect = service.ServiceStopError
     harness = harness_with_agent_relation
     harness.begin()
 
     relation = harness.model.get_relation(AGENT_RELATION)
     assert relation
-    harness.remove_relation(relation.id)
+    with pytest.raises(RuntimeError, match="Error stopping the agent service"):
+        harness.remove_relation(relation.id)
 
-    assert harness.charm.unit.status.name == ops.BlockedStatus.name
-    assert harness.charm.unit.status.message == "Error stopping the agent service"
+
+def test_agent_relation_restarts_when_service_files_change(
+    harness_with_agent_relation: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    service_mocks: SimpleNamespace,
+):
+    """Restart the agent when a local user/home configuration changes."""
+    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
+    service_mocks.install.return_value = True
+    service_mocks.credentials_changed.return_value = False
+    harness = harness_with_agent_relation
+    harness.begin()
+
+    harness.charm.on.config_changed.emit()
+
+    assert service_mocks.restart.call_count == 1
+
+
+def test_agent_config_change_republishes_configured_remote_fs(
+    harness_with_agent_relation: ops.testing.Harness,
+    service_mocks: SimpleNamespace,
+):
+    """Refresh state on config changes so the relation gets the new workspace root."""
+    harness = harness_with_agent_relation
+    harness.begin()
+    relation = harness.model.get_relation(AGENT_RELATION)
+    assert relation
+
+    harness.update_config({"jenkins_home": "/srv/jenkins-agent"})
+
+    relation_data = harness.get_relation_data(relation.id, app_or_unit="jenkins-agent/0")
+    assert relation_data["remote_fs"] == "/srv/jenkins-agent"
+
+
+def test_agent_relation_added_after_begin_reconciles_credentials(
+    harness: ops.testing.Harness,
+    service_mocks: SimpleNamespace,
+    agent_relation_data: dict,
+):
+    """Refresh state when a relation is added after charm initialization."""
+    harness.begin()
+    harness.add_relation(AGENT_RELATION, "jenkins-k8s", unit_data=agent_relation_data)
+
+    assert harness.charm.state.agent_relation_credentials is not None
+    assert service_mocks.restart.call_count == 1
+    assert harness.charm.unit.status.name == ops.ActiveStatus.name

@@ -10,6 +10,8 @@ Each revision is versioned by the date of the revision.
 
 - Initialize agent state and service lazily during reconciliation so invalid
   configuration can be corrected without restarting the charm process.
+- Publish the configured agent home as `remote_fs` relation metadata and reconcile
+  the actual service configuration before restarting the agent.
 
 ## August 12, 2026
 
