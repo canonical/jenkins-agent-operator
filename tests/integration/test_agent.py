@@ -3,23 +3,29 @@
 
 """Integration tests for jenkins-agent-k8s-operator charm."""
 
+import json
 import logging
 import textwrap
 import time
 
+import jenkinsapi.custom_exceptions
 import jenkinsapi.jenkins
+import jenkinsapi.node
 import jubilant
 import pytest
 import requests
 from jubilant._juju import CLIError
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 logger = logging.getLogger()
 
 JENKINS_APPLICATION_NAME = "jenkins-k8s"
+JENKINS_AGENT_HOME = "/srv/jenkins-agent"
+JENKINS_AGENT_USER = "jenkins-agent-test"
 
 
-def _gen_test_job_xml(node_label: str):
-    """Generate a job xml with target node label.
+def _gen_test_job_xml(node_label: str, command: str = 'echo "hello world"'):
+    """Generate a job xml with target node label and shell command.
 
     Args:
         node_label: The node label to assign to job to.
@@ -44,7 +50,7 @@ def _gen_test_job_xml(node_label: str):
             <concurrentBuild>false</concurrentBuild>
             <builders>
                 <hudson.tasks.Shell>
-                    <command>echo "hello world"</command>
+                    <command>{command}</command>
                     <configuredLocalRules/>
                 </hudson.tasks.Shell>
             </builders>
@@ -55,14 +61,79 @@ def _gen_test_job_xml(node_label: str):
     )
 
 
+def _configure_agent_remote_fs(
+    client: jenkinsapi.jenkins.Jenkins, agent_name: str
+) -> jenkinsapi.node.Node:
+    """Set the Jenkins controller workspace root to the configured agent home."""
+    node = client.get_node(agent_name)
+    node.set_config_element("remoteFS", JENKINS_AGENT_HOME)
+    return node
+
+
 @pytest.fixture(scope="module", name="active_agent")
 def active_agent_fixture(
-    jenkins_agent_requirer: str, jenkins_agent_application: str, juju: jubilant.Juju
+    jenkins_agent_requirer: str,
+    jenkins_agent_application: str,
+    jenkins_client: jenkinsapi.jenkins.Jenkins,
+    juju: jubilant.Juju,
 ):
     """Agent related to server and active."""
     juju.integrate(jenkins_agent_requirer, jenkins_agent_application)
     juju.wait(jubilant.all_active, timeout=60 * 15)
+    nodes = [
+        node
+        for node in jenkins_client.get_nodes().values()
+        if jenkins_agent_application in node.name
+    ]
+    assert len(nodes) == 1, f"Expected one agent node, found {len(nodes)}"
+    _configure_agent_remote_fs(jenkins_client, nodes[0].name)
+    # Jenkins applies a node's remoteFS when the inbound agent reconnects.
+    juju.cli(
+        "ssh",
+        f"{jenkins_agent_application}/0",
+        "sudo",
+        "systemctl",
+        "restart",
+        "jenkins-agent",
+    )
+    juju.wait(jubilant.all_active, timeout=60 * 15)
+    assert _wait_for_agent_online(jenkins_client, nodes[0].name), (
+        f"Agent {nodes[0].name} did not reconnect after updating remoteFS"
+    )
     return jenkins_agent_application
+
+
+@retry(
+    retry=retry_if_exception_type(
+        (jenkinsapi.custom_exceptions.JenkinsAPIException, requests.exceptions.RequestException)
+    ),
+    stop=stop_after_attempt(10),
+    wait=wait_fixed(5),
+    reraise=True,
+)
+def _initialize_client(url: str, password: str) -> jenkinsapi.jenkins.Jenkins:
+    """Initialize a Jenkins API client, retrying until the server is ready."""
+    return jenkinsapi.jenkins.Jenkins(baseurl=url, username="admin", password=password, timeout=60)
+
+
+def _fresh_server_client(
+    microk8s_juju: jubilant.Juju, traefik_k8s_application: str
+) -> jenkinsapi.jenkins.Jenkins:
+    """Build a Jenkins client routed through the stable Traefik ingress.
+
+    The pod IP is ephemeral and the pod has a transient not-ready window when
+    restarted (it briefly 404s rather than refusing). Traefik only routes to
+    ready backends, so it is the stable target. Retry the first poll to absorb
+    any residual readiness race.
+    """
+    result = microk8s_juju.run(f"{traefik_k8s_application}/0", "show-proxied-endpoints")
+    proxied = json.loads(result.results["proxied-endpoints"])
+    url = proxied[JENKINS_APPLICATION_NAME]["url"]
+    admin_result = microk8s_juju.run(f"{JENKINS_APPLICATION_NAME}/0", "get-admin-password")
+    password = admin_result.results.get("password", "")
+    assert password, "Failed to get admin password"
+
+    return _initialize_client(url, password)
 
 
 def assert_job_success(
@@ -79,7 +150,10 @@ def assert_job_success(
     queue_item = job.invoke()
     queue_item.block_until_complete()
     build: jenkinsapi.build.Build = queue_item.get_build()
-    assert build.get_status() == "SUCCESS"
+    status = build.get_status()
+    if status != "SUCCESS":
+        logger.error("Jenkins build %s failed; console:\n%s", build, build.get_console())
+    assert status == "SUCCESS"
 
 
 def test_agent_relation(jenkins_client: jenkinsapi.jenkins.Jenkins, active_agent: str):
@@ -89,16 +163,54 @@ def test_agent_relation(jenkins_client: jenkinsapi.jenkins.Jenkins, active_agent
     assert: the agent is able to run job to completion.
     """
     nodes = jenkins_client.get_nodes()
-    assert all(node.is_online() for node in nodes.values())
     agent_nodes = [node for node in nodes.values() if active_agent in node.name]
     assert len(agent_nodes) == 1, f"Expected one agent node, found {len(agent_nodes)}"
     agent_name = agent_nodes[0].name
+    _configure_agent_remote_fs(jenkins_client, agent_name)
+    assert jenkins_client.get_node(agent_name).get_config_element("remoteFS") == JENKINS_AGENT_HOME
+    assert all(node.is_online() for node in jenkins_client.get_nodes().values())
 
     assert_job_success(
         client=jenkins_client,
         agent_name=agent_name,
         test_target_label="machine",
     )
+
+
+def test_agent_uses_configured_user_and_home(
+    jenkins_client: jenkinsapi.jenkins.Jenkins, active_agent: str
+):
+    """Verify configured agent_user and jenkins_home reach the running process.
+
+    The fixture deploys the charm with non-default values.  Running a job on the
+    agent validates the complete path from charm config through the systemd unit
+    and environment, rather than merely checking rendered files.
+    """
+    nodes = jenkins_client.get_nodes()
+    agent_nodes = [node for node in nodes.values() if active_agent in node.name]
+    assert len(agent_nodes) == 1, f"Expected one agent node, found {len(agent_nodes)}"
+    agent_name = agent_nodes[0].name
+    _configure_agent_remote_fs(jenkins_client, agent_name)
+    assert jenkins_client.get_node(agent_name).get_config_element("remoteFS") == JENKINS_AGENT_HOME
+    command = (
+        'printf "agent-user=%s\\njenkins-home=%s\\nworkdir=%s\\n" '
+        '"$(id -un)" "$JENKINS_HOME" "$PWD"'
+    )
+    job_name = f"{agent_name}-configuration"
+    job = jenkins_client.create_job(job_name, _gen_test_job_xml("machine", command))
+    queue_item = job.invoke()
+    queue_item.block_until_complete()
+    build = queue_item.get_build()
+    status = build.get_status()
+    console = build.get_console()
+    if status != "SUCCESS":
+        logger.error("Jenkins configuration build failed; console:\n%s", console)
+    assert status == "SUCCESS"
+    assert f"agent-user={JENKINS_AGENT_USER}" in console
+    # Jenkins runs freestyle jobs in a workspace below the node remote FS.
+    # The controller may export its own JENKINS_HOME to build processes; the
+    # workspace path is the authoritative agent-home check.
+    assert f"workdir={JENKINS_AGENT_HOME}/workspace/" in console
 
 
 def _wait_for_agent_online(
@@ -190,10 +302,12 @@ def test_agent_reconnects_after_server_refresh(
 
 def test_agent_traefik_ingress(
     ingressed_jenkins_server: str,
+    active_agent: str,
     jenkins_agent_application: str,
     jenkins_agent_requirer: str,
-    jenkins_client: jenkinsapi.jenkins.Jenkins,
     juju: jubilant.Juju,
+    microk8s_juju: jubilant.Juju,
+    traefik_k8s_application: str,
 ):
     """
     Verify agent connects successfully through traefik ingress using WebSocket.
@@ -274,30 +388,18 @@ def test_agent_traefik_ingress(
     logger.info("WebSocket connection verified in agent logs")
 
     # Verify agent is functional by checking it's registered in Jenkins
-    # Note: When using traefik ingress, the jenkins_client may not have access to all APIs
-    # The core verification (WebSocket connection + active status) is already confirmed above
-    try:
-        nodes = jenkins_client.get_nodes()
-        assert all(node.is_online() for node in nodes.values()), "All agents should be online"
-
-        agent_nodes = [node for node in nodes.values() if jenkins_agent_application in node.name]
-        assert len(agent_nodes) == 1, f"Expected one agent node, found {len(agent_nodes)}"
-        agent_name = agent_nodes[0].name
-
-        logger.info("Agent %s is online, running test job...", agent_name)
-
-        # Run a test job to verify the agent can execute work
-        assert_job_success(
-            client=jenkins_client,
-            agent_name=agent_name,
-            test_target_label="machine",
-        )
-        logger.info(
-            "✓ Traefik ingress test passed: agent connected via WebSocket and executed job"
-        )
-    except requests.exceptions.HTTPError as e:
-        # Jenkins API access may be limited through ingress - the core test (WebSocket connection) passed
-        logger.warning("Jenkins API access limited through ingress (expected): %s", e)
-        logger.info(
-            "✓ Traefik ingress test passed: agent connected via WebSocket (job execution skipped)"
-        )
+    # Note: When using traefik ingress, the Jenkins API access may be limited.
+    # Use a client routed through the Traefik ingress: it survives pod restarts
+    # and balancer-side readiness, unlike the module-scoped pod-IP client.
+    fresh_client = _fresh_server_client(microk8s_juju, traefik_k8s_application)
+    nodes = fresh_client.get_nodes()
+    agent_nodes = [node for node in nodes.values() if jenkins_agent_application in node.name]
+    assert len(agent_nodes) == 1, f"Expected one agent node, found {len(agent_nodes)}"
+    agent_name = agent_nodes[0].name
+    _configure_agent_remote_fs(fresh_client, agent_name)
+    assert fresh_client.get_node(agent_name).get_config_element("remoteFS") == JENKINS_AGENT_HOME
+    assert_job_success(
+        client=fresh_client,
+        agent_name=agent_name,
+        test_target_label="machine",
+    )

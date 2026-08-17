@@ -63,6 +63,7 @@ integration = [
   "protobuf==7.35.1",
   "pytest",
   "pytest-operator",
+  "tenacity",
 ]
 
 [tool.uv]

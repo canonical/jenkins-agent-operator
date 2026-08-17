@@ -26,7 +26,8 @@ def service_configuration_template_fixture(agent_relation_data: dict) -> str:
     return f'''[Service]
 Environment="JENKINS_TOKEN={agent_relation_data.get("test-model-jenkins-agent-0_secret")}"
 Environment="JENKINS_URL={agent_relation_data.get("url")}"
-Environment="JENKINS_AGENT=test-model-jenkins-agent-0"'''
+Environment="JENKINS_AGENT=test-model-jenkins-agent-0"
+Environment="JENKINS_HOME=/var/lib/jenkins"'''
 
 
 @pytest.fixture(autouse=True)

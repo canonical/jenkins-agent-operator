@@ -5,8 +5,10 @@
 
 import logging
 import os
+import re
 import typing
 from dataclasses import dataclass
+from pathlib import Path
 
 import ops
 from dotenv import dotenv_values
@@ -17,6 +19,8 @@ from typing_extensions import Literal
 AGENT_RELATION = "agent"
 
 logger = logging.getLogger()
+_AGENT_USER_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]{0,31}\$?$")
+_JENKINS_HOME_PATTERN = re.compile(r"^/[A-Za-z0-9._/-]+$")
 
 
 class Credentials(BaseModel):
@@ -132,6 +136,8 @@ class State:
     unit_data: UnitData
     websocket_mode: bool
     jenkins_agent_service_name: str = "jenkins-agent"
+    agent_user: str = "jenkins"
+    jenkins_home: Path = Path("/var/lib/jenkins")
 
     @classmethod
     def from_charm(cls, charm: ops.CharmBase) -> "State":
@@ -177,9 +183,24 @@ class State:
         # Get websocket_mode config
         websocket_mode = bool(charm.model.config.get("websocket_mode", True))
 
+        # Get user/home config
+        agent_user = str(charm.model.config.get("agent_user", "jenkins") or "jenkins")
+        jenkins_home = Path(
+            str(charm.model.config.get("jenkins_home", "/var/lib/jenkins") or "/var/lib/jenkins")
+        )
+        if (
+            not _AGENT_USER_PATTERN.fullmatch(agent_user)
+            or not _JENKINS_HOME_PATTERN.fullmatch(str(jenkins_home))
+            or jenkins_home == Path("/")
+            or ".." in jenkins_home.parts
+        ):
+            raise InvalidStateError("Invalid agent configuration.")
+
         return cls(
             agent_meta=agent_meta,
             agent_relation_credentials=agent_relation_credentials,
             unit_data=unit_data,
             websocket_mode=websocket_mode,
+            agent_user=agent_user,
+            jenkins_home=jenkins_home,
         )
