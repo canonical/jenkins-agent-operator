@@ -26,13 +26,14 @@ def test___init___invalid_state(harness: ops.testing.Harness, monkeypatch: pytes
     act: when the JenkinsAgentCharm is initialized.
     assert: The agent falls into BlockedStatus.
     """
-    monkeypatch.setattr(
-        charm_state.State,
-        "from_charm",
-        MagicMock(side_effect=[charm_state.InvalidStateError("Invalid executor message")]),
-    )
+
+    def invalid_state(_charm):
+        raise charm_state.InvalidStateError("Invalid executor message")
+
+    monkeypatch.setattr(charm_state.State, "from_charm", MagicMock(side_effect=invalid_state))
 
     harness.begin()
+    harness.charm.on.install.emit()
 
     charm: JenkinsAgentCharm = harness.charm
     assert charm.unit.status.name == ops.BlockedStatus.name
@@ -136,6 +137,7 @@ def test_reconcile_incomplete_credentials_waiting(
     """
     harness = harness_with_agent_relation
     harness.begin()
+    harness.charm.on.install.emit()
 
     charm: JenkinsAgentCharm = harness.charm
     monkeypatch.setattr(charm.state, "agent_relation_credentials", None)
@@ -202,3 +204,20 @@ def test_reconcile_config_changed_updates_databag(
         harness.get_relation_data(relation.id, app_or_unit="jenkins-agent/0")
         == charm.state.agent_meta.as_dict()
     )
+
+
+def test_invalid_initial_state_recovers_after_config_change(
+    harness: ops.testing.Harness,
+    service_mocks: SimpleNamespace,
+):
+    """Lazy state initialization allows an invalid config to be corrected."""
+    harness.update_config({"agent_user": "bad/user"})
+    harness.begin()
+    harness.charm.on.install.emit()
+    assert harness.charm.unit.status.name == ops.BlockedStatus.name
+
+    harness.update_config({"agent_user": "jenkins"})
+
+    assert harness.charm.state is not None
+    assert harness.charm.jenkins_agent_service is not None
+    assert harness.charm.unit.status.message == "Waiting for relation."

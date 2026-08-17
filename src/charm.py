@@ -26,14 +26,8 @@ class JenkinsAgentCharm(ops.CharmBase):
             args: Arguments to initialize the charm base.
         """
         super().__init__(*args)
-        try:
-            self.state = State.from_charm(self)
-        except InvalidStateError as e:
-            logger.debug("Error parsing charm_state %s", e)
-            self.unit.status = ops.BlockedStatus(e.msg)
-            return
-
-        self.jenkins_agent_service = service.JenkinsAgentService(self.state)
+        self.state = typing.cast(State, None)
+        self.jenkins_agent_service = typing.cast(service.JenkinsAgentService, None)
 
         for event in (
             self.on.install,
@@ -54,6 +48,16 @@ class JenkinsAgentCharm(ops.CharmBase):
         Raises:
             RuntimeError: when installation or service start fails.
         """
+        if self.state is None:
+            try:
+                self.state = State.from_charm(self)
+            except InvalidStateError as exc:
+                logger.debug("Error parsing charm_state %s", exc)
+                self.unit.status = ops.BlockedStatus(exc.msg)
+                return
+        if self.jenkins_agent_service is None:
+            self.jenkins_agent_service = service.JenkinsAgentService(self.state)
+
         self._reconcile_installation()
         self._reconcile_relation_data()
         self._reconcile_service()
@@ -64,6 +68,8 @@ class JenkinsAgentCharm(ops.CharmBase):
         Raises:
             RuntimeError: when the installation of the agent service fails.
         """
+        if self.jenkins_agent_service is None:
+            raise RuntimeError("Agent service is not initialized")
         try:
             self.jenkins_agent_service.install()
         except service.PackageInstallError as exc:
@@ -72,6 +78,8 @@ class JenkinsAgentCharm(ops.CharmBase):
 
     def _reconcile_relation_data(self) -> None:
         """Publish agent metadata to the relation databag when related."""
+        if self.state is None:
+            raise RuntimeError("Agent state is not initialized")
         if agent_relation := self.model.get_relation(AGENT_RELATION):
             agent_relation.data[self.unit].update(self.state.agent_meta.as_dict())
 
@@ -81,6 +89,8 @@ class JenkinsAgentCharm(ops.CharmBase):
         Raises:
             RuntimeError: when the service fails to properly start.
         """
+        if self.jenkins_agent_service is None or self.state is None:
+            raise RuntimeError("Agent state is not initialized")
         agent_service = self.jenkins_agent_service
         if not self.model.get_relation(AGENT_RELATION):
             if agent_service.is_active:

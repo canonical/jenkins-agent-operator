@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Each revision is versioned by the date of the revision.
 
+## 2026-08-17
+
+- Initialize agent state and service lazily during reconciliation so invalid
+  configuration can be corrected without restarting the charm process.
+
 ## August 12, 2026
 
 - Harden configurable agent user and home directory handling with validated paths,
