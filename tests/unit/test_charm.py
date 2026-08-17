@@ -5,6 +5,7 @@
 
 """Test for charm reconcile handler."""
 
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, PropertyMock
@@ -140,7 +141,10 @@ def test_reconcile_incomplete_credentials_waiting(
     harness.charm.on.install.emit()
 
     charm: JenkinsAgentCharm = harness.charm
-    monkeypatch.setattr(charm.state, "agent_relation_credentials", None)
+    incomplete_state = replace(
+        charm_state.State.from_charm(charm), agent_relation_credentials=None
+    )
+    monkeypatch.setattr(charm_state.State, "from_charm", lambda charm: incomplete_state)
     charm.on.update_status.emit()
 
     assert charm.unit.status.name == ops.WaitingStatus.name
@@ -202,7 +206,7 @@ def test_reconcile_config_changed_updates_databag(
 
     assert (
         harness.get_relation_data(relation.id, app_or_unit="jenkins-agent/0")
-        == charm.state.agent_meta.as_dict()
+        == charm_state.State.from_charm(charm).agent_meta.as_dict()
     )
 
 
@@ -218,6 +222,5 @@ def test_invalid_initial_state_recovers_after_config_change(
 
     harness.update_config({"agent_user": "jenkins"})
 
-    assert harness.charm.state is not None
-    assert harness.charm.jenkins_agent_service is not None
+    assert charm_state.State.from_charm(harness.charm) is not None
     assert harness.charm.unit.status.message == "Waiting for relation."

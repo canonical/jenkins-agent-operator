@@ -26,9 +26,6 @@ class JenkinsAgentCharm(ops.CharmBase):
             args: Arguments to initialize the charm base.
         """
         super().__init__(*args)
-        self.state = typing.cast(State, None)
-        self.jenkins_agent_service = typing.cast(service.JenkinsAgentService, None)
-
         for event in (
             self.on.install,
             self.on.start,
@@ -48,50 +45,48 @@ class JenkinsAgentCharm(ops.CharmBase):
         Raises:
             RuntimeError: when installation or service start fails.
         """
-        if self.state is None:
-            try:
-                self.state = State.from_charm(self)
-            except InvalidStateError as exc:
-                logger.debug("Error parsing charm_state %s", exc)
-                self.unit.status = ops.BlockedStatus(exc.msg)
-                return
-        if self.jenkins_agent_service is None:
-            self.jenkins_agent_service = service.JenkinsAgentService(self.state)
+        try:
+            state = State.from_charm(self)
+        except InvalidStateError as exc:
+            logger.debug("Error parsing charm_state %s", exc)
+            self.unit.status = ops.BlockedStatus(exc.msg)
+            return
 
-        self._reconcile_installation()
-        self._reconcile_relation_data()
-        self._reconcile_service()
+        agent_service = service.JenkinsAgentService(state)
+        self._reconcile_installation(agent_service)
+        self._reconcile_relation_data(state)
+        self._reconcile_service(state, agent_service)
 
-    def _reconcile_installation(self) -> None:
+    def _reconcile_installation(self, agent_service: service.JenkinsAgentService) -> None:
         """Ensure the agent package and service files are installed and current.
+
+        Args:
+            agent_service: The service built from the current desired state.
 
         Raises:
             RuntimeError: when the installation of the agent service fails.
         """
-        if self.jenkins_agent_service is None:
-            raise RuntimeError("Agent service is not initialized")
         try:
-            self.jenkins_agent_service.install()
+            agent_service.install()
         except service.PackageInstallError as exc:
             logger.error("Error installing the agent service %s", exc)
             raise RuntimeError("Error installing the agent service") from exc
 
-    def _reconcile_relation_data(self) -> None:
+    def _reconcile_relation_data(self, state: State) -> None:
         """Publish agent metadata to the relation databag when related."""
-        if self.state is None:
-            raise RuntimeError("Agent state is not initialized")
         if agent_relation := self.model.get_relation(AGENT_RELATION):
-            agent_relation.data[self.unit].update(self.state.agent_meta.as_dict())
+            agent_relation.data[self.unit].update(state.agent_meta.as_dict())
 
-    def _reconcile_service(self) -> None:
+    def _reconcile_service(self, state: State, agent_service: service.JenkinsAgentService) -> None:
         """Converge the jenkins agent systemd service to the desired state.
+
+        Args:
+            state: The current desired charm state.
+            agent_service: The service built from the current desired state.
 
         Raises:
             RuntimeError: when the service fails to properly start.
         """
-        if self.jenkins_agent_service is None or self.state is None:
-            raise RuntimeError("Agent state is not initialized")
-        agent_service = self.jenkins_agent_service
         if not self.model.get_relation(AGENT_RELATION):
             if agent_service.is_active:
                 try:
@@ -102,7 +97,7 @@ class JenkinsAgentCharm(ops.CharmBase):
             self.unit.status = ops.BlockedStatus("Waiting for relation.")
             return
 
-        credentials = self.state.agent_relation_credentials
+        credentials = state.agent_relation_credentials
         if not credentials:
             self.unit.status = ops.WaitingStatus("Waiting for complete relation data.")
             logger.info("Waiting for complete relation data.")
