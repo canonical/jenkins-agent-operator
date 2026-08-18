@@ -194,3 +194,25 @@ def test_agent_relation_added_after_begin_reconciles_credentials(
     assert charm_state.State.from_charm(charm).agent_relation_credentials is not None
     assert service_mocks.restart.call_count == 1
     assert harness.charm.unit.status.name == ops.ActiveStatus.name
+
+
+def test_agent_config_change_removes_stale_remote_fs(
+    harness_with_agent_relation: ops.testing.Harness,
+    service_mocks: SimpleNamespace,
+):
+    """Remove relation remote_fs when the configured home returns to default."""
+    harness = harness_with_agent_relation
+    harness.begin()
+    relation = harness.model.get_relation(AGENT_RELATION)
+    assert relation
+    harness.charm.on.install.emit()
+
+    harness.update_config({"jenkins_home": "/srv/jenkins-agent"})
+    harness.charm.on.config_changed.emit()
+    assert harness.get_relation_data(relation.id, app_or_unit="jenkins-agent/0").get(
+        "remote_fs"
+    ) == ("/srv/jenkins-agent")
+
+    harness.update_config({"jenkins_home": ""})
+    harness.charm.on.config_changed.emit()
+    assert "remote_fs" not in harness.get_relation_data(relation.id, app_or_unit="jenkins-agent/0")
