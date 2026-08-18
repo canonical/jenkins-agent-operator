@@ -71,10 +71,11 @@ config:
         by root.
     jenkins_home:
       type: string
-      default: /var/lib/jenkins
+      default: ""
       description: |
         Home directory for the Jenkins agent, passed to the agent as -workDir and
-        used as the working directory by the systemd service.
+        used as the working directory by the systemd service. If unset, the agent
+        uses /var/lib/jenkins locally and does not manage the Jenkins node remoteFS.
     websocket_mode:
       type: boolean
       default: true

@@ -67,3 +67,15 @@ def test_agent_meta_uses_configured_jenkins_home_as_remote_fs(
         charm_state.State.from_charm(harness.charm).agent_meta.as_dict()["remote_fs"]
         == "/srv/jenkins-agent"
     )
+
+
+def test_default_jenkins_home_omits_remote_fs_relation_metadata(
+    harness: ops.testing.Harness,
+    service_mocks,
+):
+    """The fallback local home must not claim controller remoteFS ownership."""
+    harness.begin()
+    harness.charm.on.install.emit()
+
+    metadata = charm_state.State.from_charm(harness.charm).agent_meta.as_dict()
+    assert "remote_fs" not in metadata
