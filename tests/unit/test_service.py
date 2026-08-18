@@ -791,7 +791,7 @@ def test_sync_service_files_read_error(
     monkeypatch.setattr(Path, "read_text", _read_text)
     _begin_with_lazy_service(harness)
 
-    with pytest.raises(service.FileRenderError, match=r"Error reading file"):
+    with pytest.raises(service.FileRenderError, match=r"Error reading"):
         _service(harness).install()
 
 

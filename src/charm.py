@@ -86,7 +86,10 @@ class JenkinsAgentCharm(ops.CharmBase):
     def _reconcile_relation_data(self, state: State) -> None:
         """Publish agent metadata to the relation databag when related."""
         if agent_relation := self.model.get_relation(AGENT_RELATION):
-            agent_relation.data[self.unit].update(state.agent_meta.as_dict())
+            metadata = state.agent_meta.as_dict()
+            if state.agent_meta.remote_fs is None:
+                agent_relation.data[self.unit].pop("remote_fs", None)
+            agent_relation.data[self.unit].update(metadata)
 
     def _reconcile_service(
         self,

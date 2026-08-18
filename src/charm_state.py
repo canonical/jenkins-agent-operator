@@ -200,7 +200,9 @@ class State:
         ):
             raise InvalidStateError("Invalid agent configuration.")
 
-        agent_meta = agent_meta.model_copy(update={"remote_fs": configured_home or None})
+        agent_meta = agent_meta.model_copy(
+            update={"remote_fs": str(jenkins_home) if configured_home else None}
+        )
 
         return cls(
             agent_meta=agent_meta,

@@ -141,11 +141,8 @@ class JenkinsAgentService:
         Raises:
             FileRenderError: if reading the existing file from disk fails.
         """
-        try:
-            if path.exists() and path.read_text(encoding="utf-8") == content:
-                return False
-        except OSError as exc:
-            raise FileRenderError(f"Error reading file:\n{exc}") from exc
+        if self._file_matches(path, content):
+            return False
         self._render_file(path, content, mode, owner=owner)
         return True
 
@@ -190,8 +187,10 @@ class JenkinsAgentService:
         if not config_file.exists():
             return True
         current_env = _parse_systemd_env(config_file.read_text())
-        return self.credentials_changed(credentials) or any(
+        return any(
             (
+                current_env.get("JENKINS_URL") != credentials.address,
+                current_env.get("JENKINS_TOKEN") != credentials.secret,
                 current_env.get("JENKINS_AGENT") != self.state.agent_meta.name,
                 current_env.get("JENKINS_HOME") != str(self.state.jenkins_home),
             )
