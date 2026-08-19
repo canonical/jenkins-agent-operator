@@ -42,11 +42,13 @@ class AgentMeta(BaseModel):
         executors: The number of executors available on the unit.
         labels: The comma separated labels to assign to the agent.
         name: The name of the agent.
+        remote_fs: The workspace root Jenkins should use on the agent.
     """
 
     labels: str
     name: str
     executors: int = Field(..., ge=1)
+    remote_fs: typing.Optional[str] = None
 
     def as_dict(self) -> typing.Dict[str, str]:
         """Return dictionary representation of agent metadata.
@@ -54,11 +56,14 @@ class AgentMeta(BaseModel):
         Returns:
             A dictionary adhering to jenkins_agent_v0 interface.
         """
-        return {
+        metadata = {
             "executors": str(self.executors),
             "labels": self.labels,
             "name": self.name,
         }
+        if self.remote_fs is not None:
+            metadata["remote_fs"] = self.remote_fs
+        return metadata
 
 
 class UnitData(BaseModel):
@@ -185,9 +190,8 @@ class State:
 
         # Get user/home config
         agent_user = str(charm.model.config.get("agent_user", "jenkins") or "jenkins")
-        jenkins_home = Path(
-            str(charm.model.config.get("jenkins_home", "/var/lib/jenkins") or "/var/lib/jenkins")
-        )
+        configured_home = str(charm.model.config.get("jenkins_home", "") or "")
+        jenkins_home = Path(configured_home or "/var/lib/jenkins")
         if (
             not _AGENT_USER_PATTERN.fullmatch(agent_user)
             or not _JENKINS_HOME_PATTERN.fullmatch(str(jenkins_home))
@@ -195,6 +199,10 @@ class State:
             or ".." in jenkins_home.parts
         ):
             raise InvalidStateError("Invalid agent configuration.")
+
+        agent_meta = agent_meta.model_copy(
+            update={"remote_fs": str(jenkins_home) if configured_home else None}
+        )
 
         return cls(
             agent_meta=agent_meta,

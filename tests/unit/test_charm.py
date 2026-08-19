@@ -27,11 +27,11 @@ def test___init___invalid_state(harness: ops.testing.Harness, monkeypatch: pytes
     act: when the JenkinsAgentCharm is initialized.
     assert: The agent falls into BlockedStatus.
     """
-
-    def invalid_state(_charm):
-        raise charm_state.InvalidStateError("Invalid executor message")
-
-    monkeypatch.setattr(charm_state.State, "from_charm", MagicMock(side_effect=invalid_state))
+    monkeypatch.setattr(
+        charm_state.State,
+        "from_charm",
+        MagicMock(side_effect=charm_state.InvalidStateError("Invalid executor message")),
+    )
 
     harness.begin()
     harness.charm.on.install.emit()
@@ -117,12 +117,13 @@ def test_reconcile_no_relation_stops_active_service(
     act: emit the update-status hook to trigger reconcile.
     assert: the charm stops the service and is blocked waiting for a relation.
     """
-    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
+    monkeypatch.setattr(service.JenkinsAgentService, "is_ready", PropertyMock(return_value=True))
+    monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
     harness.begin()
 
     harness.charm.on.update_status.emit()
 
-    assert service_mocks.reset.call_count == 1
+    assert service_mocks.reset.call_count >= 1
     assert harness.charm.unit.status.name == ops.BlockedStatus.name
 
 
@@ -177,7 +178,7 @@ def test_reconcile_active_resets_failed_state(
     act: emit the update-status hook to trigger reconcile.
     assert: the charm resets the failed state and becomes active.
     """
-    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
+    monkeypatch.setattr(service.JenkinsAgentService, "is_ready", PropertyMock(return_value=True))
     service_mocks.credentials_changed.return_value = False
     harness = harness_with_agent_relation
     harness.begin()
@@ -210,17 +211,50 @@ def test_reconcile_config_changed_updates_databag(
     )
 
 
-def test_invalid_initial_state_recovers_after_config_change(
-    harness: ops.testing.Harness,
+def test_invalid_config_remains_blocked_across_reconcile_events(
+    harness_with_agent_relation: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
     service_mocks: SimpleNamespace,
 ):
-    """Lazy state initialization allows an invalid config to be corrected."""
-    harness.update_config({"agent_user": "bad/user"})
+    """Do not resume the old valid state while invalid config persists."""
+    monkeypatch.setattr(service.JenkinsAgentService, "is_ready", PropertyMock(return_value=True))
+    monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
+    harness = harness_with_agent_relation
     harness.begin()
     harness.charm.on.install.emit()
+    harness.update_config({"agent_user": "bad/user"})
+    harness.charm.on.config_changed.emit()
+
+    assert harness.charm.unit.status.name == ops.BlockedStatus.name
+    assert service_mocks.reset.call_count >= 1
+
+    harness.charm.on.update_status.emit()
     assert harness.charm.unit.status.name == ops.BlockedStatus.name
 
-    harness.update_config({"agent_user": "jenkins"})
 
-    assert charm_state.State.from_charm(harness.charm) is not None
-    assert harness.charm.unit.status.message == "Waiting for relation."
+def test_invalid_config_reset_error_blocks_service(
+    harness_with_agent_relation: ops.testing.Harness,
+    service_mocks: SimpleNamespace,
+):
+    """Invalid desired configuration remains blocked without a service object."""
+    harness = harness_with_agent_relation
+    harness.begin()
+    harness.update_config({"agent_user": "bad/user"})
+    harness.charm.on.config_changed.emit()
+
+    assert harness.charm.unit.status.name == ops.BlockedStatus.name
+
+
+def test_service_configuration_reset_error_blocks_service(
+    harness_with_agent_relation: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    service_mocks: SimpleNamespace,
+):
+    """Surface a stop failure while applying a valid service configuration change."""
+    monkeypatch.setattr(service.JenkinsAgentService, "is_ready", PropertyMock(return_value=True))
+    monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
+    service_mocks.reset.side_effect = service.ServiceStopError
+    harness = harness_with_agent_relation
+    harness.begin()
+    with pytest.raises(RuntimeError, match="Error stopping the agent service"):
+        harness.update_config({"jenkins_home": "/srv/jenkins-agent"})

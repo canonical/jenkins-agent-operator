@@ -14,7 +14,7 @@ import pwd
 import subprocess  # nosec: B404
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock, PropertyMock, call
 
 import ops.testing
@@ -24,7 +24,7 @@ from charms.operator_libs_linux.v1 import systemd
 
 import charm_state
 import service
-from charm_state import AGENT_RELATION, Credentials
+from charm_state import AGENT_RELATION, Credentials, State
 
 if TYPE_CHECKING:
     from charm import JenkinsAgentCharm
@@ -84,6 +84,7 @@ def _mock_install_host(
         monkeypatch.setattr(os, "chown", MagicMock())
     daemon_reload = MagicMock()
     service_enable = MagicMock()
+    monkeypatch.setattr(systemd, "service_running", MagicMock(return_value=False))
     monkeypatch.setattr(systemd, "daemon_reload", daemon_reload)
     monkeypatch.setattr(systemd, "service_enable", service_enable)
     from_installed = (
@@ -135,7 +136,7 @@ def test_on_install(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatc
     host = _mock_install_host(monkeypatch, tmp_path)
     monkeypatch.setattr(apt, "add_package", apt_add_package_mock)
 
-    _begin_with_lazy_service(harness, run_install=True)
+    harness.begin_with_initial_hooks()
 
     # The package is absent (mock always raises), so every reconcile installs it
     # with the expected package list.
@@ -215,7 +216,7 @@ def test_install_renders_user_and_workdir(
     apt_add_package_mock = MagicMock()
     monkeypatch.setattr(apt, "add_package", apt_add_package_mock)
 
-    _begin_with_lazy_service(harness, run_install=True)
+    harness.begin_with_initial_hooks()
     unit_text = host.unit_path.read_text()
 
     assert "User=jenkins" in unit_text
@@ -239,7 +240,7 @@ def test_install_renders_custom_user_and_workdir(
     monkeypatch.setattr(apt, "add_package", apt_add_package_mock)
 
     harness.update_config({"agent_user": "jenkins", "jenkins_home": "/srv/jenkins"})
-    _begin_with_lazy_service(harness, run_install=True)
+    harness.begin_with_initial_hooks()
     unit_text = host.unit_path.read_text()
 
     assert "User=jenkins" in unit_text
@@ -262,7 +263,7 @@ def test_install_renders_script_with_jenkins_home(
     monkeypatch.setattr(apt, "add_package", apt_add_package_mock)
 
     harness.update_config({"jenkins_home": "/srv/jenkins"})
-    _begin_with_lazy_service(harness, run_install=True)
+    harness.begin_with_initial_hooks()
     script_text = Path(host.script_path).read_text()
 
     assert 'JENKINS_HOME="${JENKINS_HOME:-/srv/jenkins}"' in script_text
@@ -280,7 +281,7 @@ def test_install_renders_script_with_default_jenkins_home(
     apt_add_package_mock = MagicMock()
     monkeypatch.setattr(apt, "add_package", apt_add_package_mock)
 
-    _begin_with_lazy_service(harness, run_install=True)
+    harness.begin_with_initial_hooks()
     script_text = Path(host.script_path).read_text()
 
     assert 'JENKINS_HOME="${JENKINS_HOME:-/var/lib/jenkins}"' in script_text
@@ -305,7 +306,7 @@ def test_install_creates_user_and_home(
     monkeypatch.setattr(os, "chown", chown_mock)
 
     harness.update_config({"agent_user": "jenkins", "jenkins_home": str(home)})
-    _begin_with_lazy_service(harness, run_install=True)
+    harness.begin_with_initial_hooks()
 
     assert home.exists()
     jenkins_uid = pwd.getpwnam("jenkins").pw_uid
@@ -333,7 +334,7 @@ def test_install_fails_on_useradd_failure(
 
     harness.update_config({"agent_user": username, "jenkins_home": str(home)})
     with pytest.raises(RuntimeError, match=r"Error installing the agent service"):
-        _begin_with_lazy_service(harness, run_install=True)
+        harness.begin_with_initial_hooks()
 
 
 def _make_fake_useradd(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -392,7 +393,7 @@ def test_render_file_uses_configured_owner(
     monkeypatch.setattr(os, "chown", chown_mock)
 
     harness.update_config({"agent_user": "jenkins", "jenkins_home": str(home)})
-    _begin_with_lazy_service(harness, run_install=True)
+    harness.begin_with_initial_hooks()
 
     jenkins_uid = pwd.getpwnam("jenkins").pw_uid
     jenkins_gid = pwd.getpwnam("jenkins").pw_gid
@@ -420,7 +421,7 @@ def test_ensure_user_does_not_chown_existing_home_contents(
     monkeypatch.setattr(os, "chown", chown_mock)
 
     harness.update_config({"agent_user": "jenkins", "jenkins_home": str(home)})
-    _begin_with_lazy_service(harness, run_install=True)
+    harness.begin_with_initial_hooks()
 
     jenkins_uid = pwd.getpwnam("jenkins").pw_uid
     jenkins_gid = pwd.getpwnam("jenkins").pw_gid
@@ -441,7 +442,7 @@ def test_install_grants_passwordless_sudo(
     monkeypatch.setattr(service, "SUDOERS_DROP_IN_DIR", sudoers_d)
 
     harness.update_config({"agent_user": "jenkins", "jenkins_home": str(home)})
-    _begin_with_lazy_service(harness, run_install=True)
+    harness.begin_with_initial_hooks()
 
     drop_in_path = sudoers_d / "99-jenkins-agent"
     assert drop_in_path.read_text() == "jenkins ALL=(ALL:ALL) NOPASSWD: ALL\n"
@@ -467,6 +468,9 @@ def test_restart_service(
     monkeypatch.setattr(systemd, "daemon_reload", MagicMock)
     monkeypatch.setattr(systemd, "service_restart", MagicMock)
     monkeypatch.setattr(systemd, "service_running", MagicMock(return_value=True))
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "configuration_changed", MagicMock(return_value=False)
+    )
     monkeypatch.setattr(
         service.JenkinsAgentService, "_startup_check", MagicMock(return_value=True)
     )
@@ -543,7 +547,7 @@ def test_restart_service_systemd_error(
         _service(harness).restart()
 
 
-def test_service_is_active_systemd_error(
+def test_service_is_ready_systemd_error(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
 ):
     """
@@ -564,7 +568,8 @@ def test_service_is_active_systemd_error(
     monkeypatch.setattr(Path, "exists", _mock_exists)
     monkeypatch.setattr(systemd, "service_running", MagicMock(side_effect=SystemError))
 
-    assert not _service(harness).is_active
+    with pytest.raises(RuntimeError, match="Failed to query the agent service"):
+        assert _service(harness).is_ready
 
 
 def test_parse_systemd_env():
@@ -684,7 +689,7 @@ def test_restart_startup_check_timeout(
     monkeypatch.setattr(Path, "mkdir", MagicMock())
     monkeypatch.setattr(systemd, "daemon_reload", MagicMock())
     monkeypatch.setattr(systemd, "service_restart", MagicMock())
-    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=False))
+    monkeypatch.setattr(service.JenkinsAgentService, "is_ready", PropertyMock(return_value=False))
     # Collapse the polling loop so the test does not actually sleep.
     monkeypatch.setattr(service, "STARTUP_CHECK_TIMEOUT", 0)
     monkeypatch.setattr(service.time, "sleep", MagicMock())
@@ -705,7 +710,7 @@ def test_startup_check_becomes_active(
     act: call the startup check.
     assert: it returns True after breaking out of the poll loop.
     """
-    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
+    monkeypatch.setattr(service.JenkinsAgentService, "is_ready", PropertyMock(return_value=True))
     monkeypatch.setattr(service.time, "sleep", MagicMock())
     _begin_with_lazy_service(harness)
 
@@ -787,5 +792,126 @@ def test_sync_service_files_read_error(
     monkeypatch.setattr(Path, "read_text", _read_text)
     _begin_with_lazy_service(harness)
 
-    with pytest.raises(service.FileRenderError, match=r"Error reading file"):
+    with pytest.raises(service.FileRenderError, match=r"Error reading"):
         _service(harness).install()
+
+
+def test_install_reports_service_file_changes(
+    harness: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    """Return whether reconciliation changed files that require a restart."""
+    _mock_install_host(monkeypatch, tmp_path, package_installed=True)
+    _begin_with_lazy_service(harness)
+    sync_mock = MagicMock(side_effect=[True, False])
+    monkeypatch.setattr(_service(harness), "_sync_service_files", sync_mock)
+
+    assert _service(harness).install() is True
+    assert _service(harness).install() is False
+
+
+def test_is_running_queries_systemd(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch):
+    """is_running reports the systemd service state independently of readiness."""
+    _begin_with_lazy_service(harness)
+    monkeypatch.setattr(systemd, "service_running", MagicMock(return_value=True))
+    assert _service(harness).is_running
+
+
+def test_is_running_systemd_error_raises(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
+):
+    """A systemd query failure is retryable rather than silently inactive."""
+    _begin_with_lazy_service(harness)
+    monkeypatch.setattr(systemd, "service_running", MagicMock(side_effect=SystemError))
+    with pytest.raises(RuntimeError, match="Failed to query the agent service"):
+        _ = _service(harness).is_running
+
+
+def test_configuration_changed_compares_desired_override(
+    harness: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    agent_relation_data: dict,
+):
+    """Compare desired credentials/agent/home with the actual override file."""
+    harness.add_relation(AGENT_RELATION, "jenkins-k8s", unit_data=agent_relation_data)
+    _begin_with_lazy_service(harness)
+    service_instance = _service(harness)
+    override_dir = tmp_path / "override"
+    override_dir.mkdir()
+    monkeypatch.setattr(service, "SYSTEMD_SERVICE_CONF_DIR", str(override_dir))
+    monkeypatch.setattr(service_instance, "service_files_changed", MagicMock(return_value=False))
+    (override_dir / "override.conf").write_text(
+        "[Service]\n"
+        f'Environment="JENKINS_TOKEN={agent_relation_data["test-model-jenkins-agent-0_secret"]}"\n'
+        f'Environment="JENKINS_URL={agent_relation_data["url"]}"\n'
+        'Environment="JENKINS_AGENT=test-model-jenkins-agent-0"\n'
+        'Environment="JENKINS_HOME=/var/lib/jenkins"'
+    )
+    credentials = Credentials(
+        address=agent_relation_data["url"],
+        secret=agent_relation_data["test-model-jenkins-agent-0_secret"],
+    )
+
+    assert not service_instance.configuration_changed(credentials)
+    assert not service_instance.configuration_changed()
+    (override_dir / "override.conf").unlink()
+    assert service_instance.configuration_changed(credentials)
+    (override_dir / "override.conf").write_text(
+        "[Service]\n"
+        f'Environment="JENKINS_TOKEN={agent_relation_data["test-model-jenkins-agent-0_secret"]}"\n'
+        f'Environment="JENKINS_URL={agent_relation_data["url"]}"\n'
+        'Environment="JENKINS_AGENT=test-model-jenkins-agent-0"\n'
+        'Environment="JENKINS_HOME=/srv/jenkins"'
+    )
+    assert service_instance.configuration_changed(credentials)
+
+
+def test_service_files_changed_compares_rendered_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Detect drift in rendered service files before writing them."""
+    state = cast(
+        State,
+        SimpleNamespace(
+            agent_user="root", jenkins_home=Path("/var/lib/jenkins"), websocket_mode=True
+        ),
+    )
+    service_instance = service.JenkinsAgentService(state)
+    unit_path = tmp_path / "jenkins-agent.service"
+    script_path = tmp_path / "jenkins-agent"
+    monkeypatch.setattr(service, "JENKINS_AGENT_SYSTEMD_PATH", unit_path)
+    monkeypatch.setattr(service, "JENKINS_AGENT_START_SCRIPT_PATH", script_path)
+    monkeypatch.setattr(
+        service_instance, "_render_service_files", MagicMock(return_value=("unit", "script"))
+    )
+    unit_path.write_text("unit")
+    script_path.write_text("script")
+
+    assert not service_instance.service_files_changed()
+    script_path.write_text("changed")
+    assert service_instance.service_files_changed()
+
+
+def test_service_files_changed_read_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Surface an error reading an existing service file."""
+    state = cast(
+        State,
+        SimpleNamespace(
+            agent_user="root", jenkins_home=Path("/var/lib/jenkins"), websocket_mode=True
+        ),
+    )
+    service_instance = service.JenkinsAgentService(state)
+    unit_path = tmp_path / "jenkins-agent.service"
+    script_path = tmp_path / "jenkins-agent"
+    monkeypatch.setattr(service, "JENKINS_AGENT_SYSTEMD_PATH", unit_path)
+    monkeypatch.setattr(service, "JENKINS_AGENT_START_SCRIPT_PATH", script_path)
+    unit_path.write_text("unit")
+    monkeypatch.setattr(
+        service_instance, "_render_service_files", MagicMock(return_value=("unit", "script"))
+    )
+    monkeypatch.setattr(Path, "read_text", MagicMock(side_effect=OSError("read failed")))
+
+    with pytest.raises(service.FileRenderError, match="read failed"):
+        service_instance.service_files_changed()

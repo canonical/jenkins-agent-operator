@@ -10,6 +10,8 @@ Each revision is versioned by the date of the revision.
 
 - Initialize agent state and service lazily during reconciliation so invalid
   configuration can be corrected without restarting the charm process.
+- Publish an explicitly configured agent home as optional `remote_fs` relation metadata;
+  the default local `/var/lib/jenkins` home does not claim controller ownership.
 
 ## August 12, 2026
 

@@ -83,7 +83,7 @@ class JenkinsAgentService:
     """Jenkins agent service class.
 
     Attrs:
-       is_active: Indicate if the agent service is active and running.
+       is_ready: Indicate if the agent service is active and running.
     """
 
     def __init__(self, state: State):
@@ -141,34 +141,27 @@ class JenkinsAgentService:
         Raises:
             FileRenderError: if reading the existing file from disk fails.
         """
-        try:
-            if path.exists() and path.read_text(encoding="utf-8") == content:
-                return False
-        except OSError as exc:
-            raise FileRenderError(f"Error reading file:\n{exc}") from exc
+        if self._file_matches(path, content):
+            return False
         self._render_file(path, content, mode, owner=owner)
         return True
 
     @property
-    def is_active(self) -> bool:
-        """Indicate if the jenkins agent service is active."""
+    def is_running(self) -> bool:
+        """Indicate if the systemd service is running, independent of readiness."""
         try:
-            return self.state.jenkins_home.joinpath(".ready").exists() and systemd.service_running(
-                AGENT_SERVICE_NAME
-            )
+            return systemd.service_running(AGENT_SERVICE_NAME)
         except SystemError as exc:
-            logger.error("Failed to call systemctl:\n%s", exc)
-            return False
+            logger.error("Failed to call systemctl:")
+            raise RuntimeError("Failed to query the agent service") from exc
+
+    @property
+    def is_ready(self) -> bool:
+        """Indicate if the agent is running and has created its ready marker."""
+        return self.is_running and self.state.jenkins_home.joinpath(".ready").exists()
 
     def credentials_changed(self, credentials: Credentials) -> bool:
-        """Check whether the current service credentials differ from the given ones.
-
-        Args:
-            credentials: The credentials to compare against the running configuration.
-
-        Returns:
-            True if the credentials have changed, False otherwise.
-        """
+        """Return whether the running override differs from desired configuration."""
         config_file = Path(f"{SYSTEMD_SERVICE_CONF_DIR}/override.conf")
         if not config_file.exists():
             return True
@@ -176,6 +169,54 @@ class JenkinsAgentService:
         return (
             current_env.get("JENKINS_URL") != credentials.address
             or current_env.get("JENKINS_TOKEN") != credentials.secret
+        )
+
+    def configuration_changed(self, credentials: typing.Optional[Credentials] = None) -> bool:
+        """Return whether actual service configuration differs from desired state."""
+        if self.service_files_changed():
+            return True
+        if credentials is None:
+            return False
+        config_file = Path(f"{SYSTEMD_SERVICE_CONF_DIR}/override.conf")
+        if not config_file.exists():
+            return True
+        current_env = _parse_systemd_env(config_file.read_text())
+        return any(
+            (
+                current_env.get("JENKINS_URL") != credentials.address,
+                current_env.get("JENKINS_TOKEN") != credentials.secret,
+                current_env.get("JENKINS_AGENT") != self.state.agent_meta.name,
+                current_env.get("JENKINS_HOME") != str(self.state.jenkins_home),
+            )
+        )
+
+    def _render_service_files(self) -> typing.Tuple[str, str]:
+        """Render desired systemd and launcher contents without writing them."""
+        unit_template = self._template_loader.get_template("jenkins_agent.service")
+        service_content = unit_template.render(
+            agent_user=self.state.agent_user,
+            jenkins_home=str(self.state.jenkins_home),
+        )
+        script_template = self._template_loader.get_template("jenkins_agent.sh.j2")
+        script_content = script_template.render(
+            websocket_mode=self.state.websocket_mode,
+            jenkins_home=str(self.state.jenkins_home),
+        )
+        return service_content, script_content
+
+    def _file_matches(self, path: Path, content: str) -> bool:
+        """Return whether a file contains the desired content."""
+        try:
+            return path.exists() and path.read_text(encoding="utf-8") == content
+        except OSError as exc:
+            raise FileRenderError(f"Error reading {path}:\n{exc}") from exc
+
+    def service_files_changed(self) -> bool:
+        """Return whether desired service files differ from files on disk."""
+        service_content, script_content = self._render_service_files()
+        return not (
+            self._file_matches(JENKINS_AGENT_SYSTEMD_PATH, service_content)
+            and self._file_matches(JENKINS_AGENT_START_SCRIPT_PATH, script_content)
         )
 
     def _sync_service_files(self) -> bool:
@@ -190,20 +231,9 @@ class JenkinsAgentService:
             True if the systemd unit file changed (a daemon reload is required),
             False otherwise.
         """
-        unit_template = self._template_loader.get_template("jenkins_agent.service")
-        service_content = unit_template.render(
-            agent_user=self.state.agent_user,
-            jenkins_home=str(self.state.jenkins_home),
-        )
+        service_content, script_content = self._render_service_files()
         unit_changed = self._write_if_changed(JENKINS_AGENT_SYSTEMD_PATH, service_content, 0o644)
 
-        # Render the agent script template with websocket_mode config and home dir
-        websocket_mode = self.state.websocket_mode
-        script_template = self._template_loader.get_template("jenkins_agent.sh.j2")
-        script_content = script_template.render(
-            websocket_mode=websocket_mode,
-            jenkins_home=str(self.state.jenkins_home),
-        )
         script_changed = self._write_if_changed(
             JENKINS_AGENT_START_SCRIPT_PATH, script_content, 0o755
         )
@@ -222,13 +252,16 @@ class JenkinsAgentService:
                 return False
         return True
 
-    def install(self) -> None:
+    def install(self) -> bool:
         """Converge the agent service files and required packages to desired state.
 
         Idempotent and safe to run on every reconcile: the systemd unit and launch
         script are re-rendered whenever their contents drift from the shipped
         templates (reloading and enabling the unit when the unit file changes), and
         the required apt packages are installed only when missing.
+
+        Returns:
+            Whether the rendered service files changed and require a restart.
 
         Raises:
             PackageInstallError: if enabling the service or installing a package
@@ -250,6 +283,7 @@ class JenkinsAgentService:
                 systemd.service_enable(AGENT_SERVICE_NAME)
             except systemd.SystemdError as exc:
                 raise PackageInstallError("Error enabling the agent service") from exc
+        return unit_file_changed
 
     def _ensure_user_and_home(self) -> None:
         """Ensure the configured agent user exists, owns the home, and can sudo.
@@ -398,6 +432,6 @@ class JenkinsAgentService:
         timeout = time.time() + STARTUP_CHECK_TIMEOUT
         while time.time() < timeout:
             time.sleep(STARTUP_CHECK_INTERVAL)
-            if self.is_active:
+            if self.is_ready:
                 break
-        return self.is_active
+        return self.is_ready
