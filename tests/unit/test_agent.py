@@ -92,7 +92,7 @@ def test_agent_relation_no_restart_when_unchanged(
     act: emit an event to trigger reconcile.
     assert: The charm does not restart the service and stays active.
     """
-    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
+    monkeypatch.setattr(service.JenkinsAgentService, "is_ready", PropertyMock(return_value=True))
     service_mocks.credentials_changed.return_value = False
     harness = harness_with_agent_relation
     harness.begin()
@@ -113,7 +113,7 @@ def test_agent_relation_broken_stops_service(
     act: remove the relation (fires departed then broken -> reconcile).
     assert: The charm stops the service and is blocked waiting for a relation.
     """
-    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
+    monkeypatch.setattr(service.JenkinsAgentService, "is_ready", PropertyMock(return_value=True))
     monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
     harness = harness_with_agent_relation
     harness.begin()
@@ -136,7 +136,7 @@ def test_agent_relation_broken_stop_error(
     act: remove the relation to trigger reconcile teardown.
     assert: The charm is blocked reporting the stop error.
     """
-    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
+    monkeypatch.setattr(service.JenkinsAgentService, "is_ready", PropertyMock(return_value=True))
     monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
     service_mocks.reset.side_effect = service.ServiceStopError
     harness = harness_with_agent_relation
@@ -154,7 +154,7 @@ def test_agent_relation_restarts_when_service_files_change(
     service_mocks: SimpleNamespace,
 ):
     """Restart the agent when a local user/home configuration changes."""
-    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
+    monkeypatch.setattr(service.JenkinsAgentService, "is_ready", PropertyMock(return_value=True))
     service_mocks.install.return_value = True
     service_mocks.credentials_changed.return_value = False
     harness = harness_with_agent_relation

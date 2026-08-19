@@ -547,7 +547,7 @@ def test_restart_service_systemd_error(
         _service(harness).restart()
 
 
-def test_service_is_active_systemd_error(
+def test_service_is_ready_systemd_error(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
 ):
     """
@@ -568,7 +568,8 @@ def test_service_is_active_systemd_error(
     monkeypatch.setattr(Path, "exists", _mock_exists)
     monkeypatch.setattr(systemd, "service_running", MagicMock(side_effect=SystemError))
 
-    assert not _service(harness).is_active
+    with pytest.raises(RuntimeError, match="Failed to query the agent service"):
+        assert _service(harness).is_ready
 
 
 def test_parse_systemd_env():
@@ -688,7 +689,7 @@ def test_restart_startup_check_timeout(
     monkeypatch.setattr(Path, "mkdir", MagicMock())
     monkeypatch.setattr(systemd, "daemon_reload", MagicMock())
     monkeypatch.setattr(systemd, "service_restart", MagicMock())
-    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=False))
+    monkeypatch.setattr(service.JenkinsAgentService, "is_ready", PropertyMock(return_value=False))
     # Collapse the polling loop so the test does not actually sleep.
     monkeypatch.setattr(service, "STARTUP_CHECK_TIMEOUT", 0)
     monkeypatch.setattr(service.time, "sleep", MagicMock())
@@ -709,7 +710,7 @@ def test_startup_check_becomes_active(
     act: call the startup check.
     assert: it returns True after breaking out of the poll loop.
     """
-    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
+    monkeypatch.setattr(service.JenkinsAgentService, "is_ready", PropertyMock(return_value=True))
     monkeypatch.setattr(service.time, "sleep", MagicMock())
     _begin_with_lazy_service(harness)
 

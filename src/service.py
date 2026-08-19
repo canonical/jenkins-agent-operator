@@ -83,7 +83,7 @@ class JenkinsAgentService:
     """Jenkins agent service class.
 
     Attrs:
-       is_active: Indicate if the agent service is active and running.
+       is_ready: Indicate if the agent service is active and running.
     """
 
     def __init__(self, state: State):
@@ -156,15 +156,9 @@ class JenkinsAgentService:
             raise RuntimeError("Failed to query the agent service") from exc
 
     @property
-    def is_active(self) -> bool:
-        """Indicate if the jenkins agent service is active."""
-        try:
-            return self.state.jenkins_home.joinpath(".ready").exists() and systemd.service_running(
-                AGENT_SERVICE_NAME
-            )
-        except SystemError as exc:
-            logger.error("Failed to call systemctl:\n%s", exc)
-            return False
+    def is_ready(self) -> bool:
+        """Indicate if the agent is running and has created its ready marker."""
+        return self.is_running and self.state.jenkins_home.joinpath(".ready").exists()
 
     def credentials_changed(self, credentials: Credentials) -> bool:
         """Return whether the running override differs from desired configuration."""
@@ -438,6 +432,6 @@ class JenkinsAgentService:
         timeout = time.time() + STARTUP_CHECK_TIMEOUT
         while time.time() < timeout:
             time.sleep(STARTUP_CHECK_INTERVAL)
-            if self.is_active:
+            if self.is_ready:
                 break
-        return self.is_active
+        return self.is_ready

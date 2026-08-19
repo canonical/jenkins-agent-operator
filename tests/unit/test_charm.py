@@ -117,7 +117,7 @@ def test_reconcile_no_relation_stops_active_service(
     act: emit the update-status hook to trigger reconcile.
     assert: the charm stops the service and is blocked waiting for a relation.
     """
-    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
+    monkeypatch.setattr(service.JenkinsAgentService, "is_ready", PropertyMock(return_value=True))
     monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
     harness.begin()
 
@@ -178,7 +178,7 @@ def test_reconcile_active_resets_failed_state(
     act: emit the update-status hook to trigger reconcile.
     assert: the charm resets the failed state and becomes active.
     """
-    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
+    monkeypatch.setattr(service.JenkinsAgentService, "is_ready", PropertyMock(return_value=True))
     service_mocks.credentials_changed.return_value = False
     harness = harness_with_agent_relation
     harness.begin()
@@ -217,7 +217,7 @@ def test_invalid_config_remains_blocked_across_reconcile_events(
     service_mocks: SimpleNamespace,
 ):
     """Do not resume the old valid state while invalid config persists."""
-    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
+    monkeypatch.setattr(service.JenkinsAgentService, "is_ready", PropertyMock(return_value=True))
     monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
     harness = harness_with_agent_relation
     harness.begin()
@@ -251,7 +251,7 @@ def test_service_configuration_reset_error_blocks_service(
     service_mocks: SimpleNamespace,
 ):
     """Surface a stop failure while applying a valid service configuration change."""
-    monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
+    monkeypatch.setattr(service.JenkinsAgentService, "is_ready", PropertyMock(return_value=True))
     monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
     service_mocks.reset.side_effect = service.ServiceStopError
     harness = harness_with_agent_relation

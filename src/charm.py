@@ -123,7 +123,7 @@ class JenkinsAgentCharm(ops.CharmBase):
             return
 
         if (
-            agent_service.is_active
+            agent_service.is_ready
             and not service_files_changed
             and not agent_service.credentials_changed(credentials)
         ):
