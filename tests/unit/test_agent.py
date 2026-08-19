@@ -13,6 +13,7 @@ import ops
 import ops.testing
 import pytest
 
+import charm_state
 import service
 from charm_state import AGENT_RELATION
 
@@ -36,7 +37,7 @@ def test_agent_relation_joined_sets_databag(
     charm: JenkinsAgentCharm = harness.charm
     assert (
         harness.get_relation_data(relation_id, app_or_unit="jenkins-agent/0")
-        == charm.state.agent_meta.as_dict()
+        == charm_state.State.from_charm(charm).agent_meta.as_dict()
     )
 
 
@@ -56,12 +57,10 @@ def test_agent_relation_changed_restarts_service(
     charm: JenkinsAgentCharm = harness.charm
     charm.on.config_changed.emit()
 
-    assert charm.state.agent_relation_credentials
-    assert (
-        charm.state.agent_relation_credentials.secret
-        == agent_relation_data["test-model-jenkins-agent-0_secret"]
-    )
-    assert charm.state.agent_relation_credentials.address == agent_relation_data["url"]
+    credentials = charm_state.State.from_charm(charm).agent_relation_credentials
+    assert credentials
+    assert credentials.secret == agent_relation_data["test-model-jenkins-agent-0_secret"]
+    assert credentials.address == agent_relation_data["url"]
     assert service_mocks.restart.call_count == 1
     assert charm.unit.status.name == ops.ActiveStatus.name
 

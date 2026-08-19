@@ -22,11 +22,24 @@ import pytest
 from charms.operator_libs_linux.v0 import apt
 from charms.operator_libs_linux.v1 import systemd
 
+import charm_state
 import service
 from charm_state import AGENT_RELATION, Credentials
 
 if TYPE_CHECKING:
     from charm import JenkinsAgentCharm
+
+
+def _begin_with_lazy_service(harness: ops.testing.Harness, *, run_install: bool = False) -> None:
+    """Run a minimal hook so lazy charm state/service initialization occurs."""
+    harness.begin()
+    if run_install:
+        harness.charm.on.install.emit()
+
+
+def _service(harness: ops.testing.Harness) -> service.JenkinsAgentService:
+    """Build the service from the charm's current desired state for direct tests."""
+    return service.JenkinsAgentService(charm_state.State.from_charm(harness.charm))
 
 
 def _mock_install_host(
@@ -103,7 +116,7 @@ def test_install_apt_package_gpg_key_error(
     assert: The charm should be in an error state.
     """
     _mock_install_host(monkeypatch, tmp_path)
-    harness.begin()
+    _begin_with_lazy_service(harness, run_install=True)
     charm: JenkinsAgentCharm = harness.charm
     monkeypatch.setattr(apt, "add_package", MagicMock())
     monkeypatch.setattr(apt, f, MagicMock(side_effect=[error_thrown]))
@@ -122,7 +135,7 @@ def test_on_install(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatc
     host = _mock_install_host(monkeypatch, tmp_path)
     monkeypatch.setattr(apt, "add_package", apt_add_package_mock)
 
-    harness.begin_with_initial_hooks()
+    _begin_with_lazy_service(harness, run_install=True)
 
     # The package is absent (mock always raises), so every reconcile installs it
     # with the expected package list.
@@ -147,7 +160,7 @@ def test_install_skips_apt_when_package_present(
     _mock_install_host(monkeypatch, tmp_path, package_installed=True)
     monkeypatch.setattr(apt, "add_package", apt_add_package_mock)
 
-    harness.begin()
+    _begin_with_lazy_service(harness, run_install=True)
     harness.charm.on.install.emit()
 
     assert apt_add_package_mock.call_count == 0
@@ -162,7 +175,7 @@ def test_install_skips_reload_when_unit_unchanged(
     assert: the second run does not reload or re-enable the unchanged unit file.
     """
     host = _mock_install_host(monkeypatch, tmp_path, package_installed=True)
-    harness.begin()
+    _begin_with_lazy_service(harness, run_install=True)
 
     harness.charm.on.install.emit()
     first_enable_count = host.service_enable.call_count
@@ -183,7 +196,7 @@ def test_install_enable_error(
     """
     host = _mock_install_host(monkeypatch, tmp_path)
     host.service_enable.side_effect = systemd.SystemdError("boom")
-    harness.begin()
+    _begin_with_lazy_service(harness)
 
     with pytest.raises(RuntimeError, match=r"Error installing the agent service"):
         harness.charm.on.install.emit()
@@ -202,7 +215,7 @@ def test_install_renders_user_and_workdir(
     apt_add_package_mock = MagicMock()
     monkeypatch.setattr(apt, "add_package", apt_add_package_mock)
 
-    harness.begin_with_initial_hooks()
+    _begin_with_lazy_service(harness, run_install=True)
     unit_text = host.unit_path.read_text()
 
     assert "User=jenkins" in unit_text
@@ -226,7 +239,7 @@ def test_install_renders_custom_user_and_workdir(
     monkeypatch.setattr(apt, "add_package", apt_add_package_mock)
 
     harness.update_config({"agent_user": "jenkins", "jenkins_home": "/srv/jenkins"})
-    harness.begin_with_initial_hooks()
+    _begin_with_lazy_service(harness, run_install=True)
     unit_text = host.unit_path.read_text()
 
     assert "User=jenkins" in unit_text
@@ -249,7 +262,7 @@ def test_install_renders_script_with_jenkins_home(
     monkeypatch.setattr(apt, "add_package", apt_add_package_mock)
 
     harness.update_config({"jenkins_home": "/srv/jenkins"})
-    harness.begin_with_initial_hooks()
+    _begin_with_lazy_service(harness, run_install=True)
     script_text = Path(host.script_path).read_text()
 
     assert 'JENKINS_HOME="${JENKINS_HOME:-/srv/jenkins}"' in script_text
@@ -267,7 +280,7 @@ def test_install_renders_script_with_default_jenkins_home(
     apt_add_package_mock = MagicMock()
     monkeypatch.setattr(apt, "add_package", apt_add_package_mock)
 
-    harness.begin_with_initial_hooks()
+    _begin_with_lazy_service(harness, run_install=True)
     script_text = Path(host.script_path).read_text()
 
     assert 'JENKINS_HOME="${JENKINS_HOME:-/var/lib/jenkins}"' in script_text
@@ -292,7 +305,7 @@ def test_install_creates_user_and_home(
     monkeypatch.setattr(os, "chown", chown_mock)
 
     harness.update_config({"agent_user": "jenkins", "jenkins_home": str(home)})
-    harness.begin_with_initial_hooks()
+    _begin_with_lazy_service(harness, run_install=True)
 
     assert home.exists()
     jenkins_uid = pwd.getpwnam("jenkins").pw_uid
@@ -320,7 +333,7 @@ def test_install_fails_on_useradd_failure(
 
     harness.update_config({"agent_user": username, "jenkins_home": str(home)})
     with pytest.raises(RuntimeError, match=r"Error installing the agent service"):
-        harness.begin_with_initial_hooks()
+        _begin_with_lazy_service(harness, run_install=True)
 
 
 def _make_fake_useradd(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -379,7 +392,7 @@ def test_render_file_uses_configured_owner(
     monkeypatch.setattr(os, "chown", chown_mock)
 
     harness.update_config({"agent_user": "jenkins", "jenkins_home": str(home)})
-    harness.begin_with_initial_hooks()
+    _begin_with_lazy_service(harness, run_install=True)
 
     jenkins_uid = pwd.getpwnam("jenkins").pw_uid
     jenkins_gid = pwd.getpwnam("jenkins").pw_gid
@@ -407,7 +420,7 @@ def test_ensure_user_does_not_chown_existing_home_contents(
     monkeypatch.setattr(os, "chown", chown_mock)
 
     harness.update_config({"agent_user": "jenkins", "jenkins_home": str(home)})
-    harness.begin_with_initial_hooks()
+    _begin_with_lazy_service(harness, run_install=True)
 
     jenkins_uid = pwd.getpwnam("jenkins").pw_uid
     jenkins_gid = pwd.getpwnam("jenkins").pw_gid
@@ -428,7 +441,7 @@ def test_install_grants_passwordless_sudo(
     monkeypatch.setattr(service, "SUDOERS_DROP_IN_DIR", sudoers_d)
 
     harness.update_config({"agent_user": "jenkins", "jenkins_home": str(home)})
-    harness.begin_with_initial_hooks()
+    _begin_with_lazy_service(harness, run_install=True)
 
     drop_in_path = sudoers_d / "99-jenkins-agent"
     assert drop_in_path.read_text() == "jenkins ALL=(ALL:ALL) NOPASSWD: ALL\n"
@@ -462,7 +475,7 @@ def test_restart_service(
     monkeypatch.setattr(service.JenkinsAgentService, "install", MagicMock())
 
     harness.add_relation(AGENT_RELATION, "jenkins-k8s", unit_data=agent_relation_data)
-    harness.begin()
+    _begin_with_lazy_service(harness, run_install=True)
     charm: JenkinsAgentCharm = harness.charm
     charm.on.config_changed.emit()
 
@@ -472,10 +485,8 @@ def test_restart_service(
 
 def test_restart_template_preserves_systemd_values(harness: ops.testing.Harness):
     """Systemd templates must not HTML-escape credentials or URLs."""
-    harness.begin()
-    template = harness.charm.jenkins_agent_service._template_loader.get_template(
-        "jenkins_agent_env.conf.j2"
-    )
+    _begin_with_lazy_service(harness)
+    template = _service(harness)._template_loader.get_template("jenkins_agent_env.conf.j2")
 
     rendered = template.render(
         environments={"JENKINS_TOKEN": 'a&b<c>"d', "JENKINS_URL": "https://jenkins.test"}
@@ -497,14 +508,13 @@ def test_restart_service_write_config_type_error(
     monkeypatch.setattr(Path, "write_text", MagicMock(side_effect=TypeError))
     monkeypatch.setattr(Path, "mkdir", MagicMock)
     harness.add_relation(AGENT_RELATION, "jenkins-k8s", unit_data=agent_relation_data)
-    harness.begin()
-    charm: JenkinsAgentCharm = harness.charm
+    _begin_with_lazy_service(harness)
 
     with pytest.raises(
         service.ServiceRestartError,
         match=r"Error interacting with the filesystem when rendering configuration file",
     ):
-        charm.jenkins_agent_service.restart()
+        _service(harness).restart()
 
 
 def test_restart_service_systemd_error(
@@ -524,14 +534,13 @@ def test_restart_service_systemd_error(
         MagicMock(side_effect=systemd.SystemdError(systemd_error_message)),
     )
     harness.add_relation(AGENT_RELATION, "jenkins-k8s", unit_data=agent_relation_data)
-    harness.begin()
-    charm: JenkinsAgentCharm = harness.charm
+    _begin_with_lazy_service(harness)
 
     with pytest.raises(
         service.ServiceRestartError,
         match=rf"Error starting the agent service:\n{systemd_error_message}",
     ):
-        charm.jenkins_agent_service.restart()
+        _service(harness).restart()
 
 
 def test_service_is_active_systemd_error(
@@ -542,7 +551,7 @@ def test_service_is_active_systemd_error(
     act: Check if the service is running.
     assert: The call should return false and not raising any exceptions.
     """
-    harness.begin()
+    _begin_with_lazy_service(harness)
     # Mock Path.exists to return True for AGENT_READY_PATH so we exercise the
     # systemd.service_running path.
     real_exists = Path.exists
@@ -554,9 +563,8 @@ def test_service_is_active_systemd_error(
 
     monkeypatch.setattr(Path, "exists", _mock_exists)
     monkeypatch.setattr(systemd, "service_running", MagicMock(side_effect=SystemError))
-    charm: JenkinsAgentCharm = harness.charm
 
-    assert not charm.jenkins_agent_service.is_active
+    assert not _service(harness).is_active
 
 
 def test_parse_systemd_env():
@@ -644,9 +652,8 @@ def test_credentials_changed(
         "jenkins-k8s",
         unit_data={"url": cred_url, "test-model-jenkins-agent-0_secret": cred_secret},
     )
-    harness.begin()
-    charm: JenkinsAgentCharm = harness.charm
-    result = charm.jenkins_agent_service.credentials_changed(
+    _begin_with_lazy_service(harness)
+    result = _service(harness).credentials_changed(
         Credentials(address=cred_url, secret=cred_secret)
     )
     assert result is expected
@@ -659,11 +666,10 @@ def test_restart_missing_credentials(harness: ops.testing.Harness):
     assert: ServiceRestartError is raised for the missing configuration.
     """
     # The default harness has no agent relation, so credentials resolve to None.
-    harness.begin()
-    charm: JenkinsAgentCharm = harness.charm
+    _begin_with_lazy_service(harness)
 
     with pytest.raises(service.ServiceRestartError, match=r"missing configuration"):
-        charm.jenkins_agent_service.restart()
+        _service(harness).restart()
 
 
 def test_restart_startup_check_timeout(
@@ -683,13 +689,12 @@ def test_restart_startup_check_timeout(
     monkeypatch.setattr(service, "STARTUP_CHECK_TIMEOUT", 0)
     monkeypatch.setattr(service.time, "sleep", MagicMock())
     harness.add_relation(AGENT_RELATION, "jenkins-k8s", unit_data=agent_relation_data)
-    harness.begin()
-    charm: JenkinsAgentCharm = harness.charm
+    _begin_with_lazy_service(harness)
 
     with pytest.raises(
         service.ServiceRestartError, match=r"waiting for the agent service to start"
     ):
-        charm.jenkins_agent_service.restart()
+        _service(harness).restart()
 
 
 def test_startup_check_becomes_active(
@@ -702,10 +707,9 @@ def test_startup_check_becomes_active(
     """
     monkeypatch.setattr(service.JenkinsAgentService, "is_active", PropertyMock(return_value=True))
     monkeypatch.setattr(service.time, "sleep", MagicMock())
-    harness.begin()
-    charm: JenkinsAgentCharm = harness.charm
+    _begin_with_lazy_service(harness)
 
-    assert charm.jenkins_agent_service._startup_check() is True
+    assert _service(harness)._startup_check() is True
 
 
 def test_reset_failed_state_logs_on_error(
@@ -717,11 +721,10 @@ def test_reset_failed_state_logs_on_error(
     assert: the error is swallowed (logged, not raised) as it is non-critical.
     """
     monkeypatch.setattr(systemd, "_systemctl", MagicMock(side_effect=systemd.SystemdError))
-    harness.begin()
-    charm: JenkinsAgentCharm = harness.charm
+    _begin_with_lazy_service(harness)
 
     # Should not raise.
-    charm.jenkins_agent_service.reset_failed_state()
+    _service(harness).reset_failed_state()
 
 
 def test_reset_stops_and_clears_config(
@@ -739,10 +742,9 @@ def test_reset_stops_and_clears_config(
     monkeypatch.setattr(service, "SYSTEMD_SERVICE_CONF_DIR", str(config_dir))
     stop_mock = MagicMock()
     monkeypatch.setattr(systemd, "service_stop", stop_mock)
-    harness.begin()
-    charm: JenkinsAgentCharm = harness.charm
+    _begin_with_lazy_service(harness)
 
-    charm.jenkins_agent_service.reset()
+    _service(harness).reset()
 
     assert stop_mock.call_count == 1
     assert not override.exists()
@@ -755,11 +757,10 @@ def test_reset_stop_error(harness: ops.testing.Harness, monkeypatch: pytest.Monk
     assert: ServiceStopError is raised.
     """
     monkeypatch.setattr(systemd, "service_stop", MagicMock(side_effect=systemd.SystemdError))
-    harness.begin()
-    charm: JenkinsAgentCharm = harness.charm
+    _begin_with_lazy_service(harness)
 
     with pytest.raises(service.ServiceStopError, match=r"failed to stop"):
-        charm.jenkins_agent_service.reset()
+        _service(harness).reset()
 
 
 def test_sync_service_files_read_error(
@@ -784,8 +785,7 @@ def test_sync_service_files_read_error(
         return real_read_text(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "read_text", _read_text)
-    harness.begin()
-    charm: JenkinsAgentCharm = harness.charm
+    _begin_with_lazy_service(harness)
 
     with pytest.raises(service.FileRenderError, match=r"Error reading file"):
-        charm.jenkins_agent_service.install()
+        _service(harness).install()
