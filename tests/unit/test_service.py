@@ -478,15 +478,27 @@ def test_install_relocates_existing_user_home_on_config_change(
     monkeypatch.setattr(apt, "add_package", MagicMock())
     _make_fake_useradd(monkeypatch)
     monkeypatch.setattr(os, "chown", MagicMock())
+    real_run = subprocess.run
+    run_calls: list = []
+
+    def recording_run(args, **kwargs):
+        run_calls.append(args)
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", recording_run)
 
     harness.update_config({"agent_user": "jenkins", "jenkins_home": str(old_home)})
     harness.begin_with_initial_hooks()
     assert pwd.getpwnam("jenkins").pw_dir == str(old_home)
+    assert old_home.exists()
 
     harness.update_config({"jenkins_home": str(new_home)})
     harness.charm.on.config_changed.emit()
 
     assert pwd.getpwnam("jenkins").pw_dir == str(new_home)
+    usermod_calls = [args for args in run_calls if args[0].endswith("usermod")]
+    assert len(usermod_calls) == 1
+    assert "--move-home" in usermod_calls[0]
 
 
 def test_install_grants_passwordless_sudo(
