@@ -337,33 +337,64 @@ def test_install_fails_on_useradd_failure(
         harness.begin_with_initial_hooks()
 
 
+def _fake_usermod(args: list, user_db: dict) -> subprocess.CompletedProcess:
+    """Simulate `usermod --home HOME [--move-home] USER` against an in-memory user_db."""
+    if "--home" not in args:
+        raise subprocess.CalledProcessError(1, args)
+    username = args[-1]
+    try:
+        new_home = args[args.index("--home") + 1]
+    except (ValueError, IndexError) as exc:
+        raise subprocess.CalledProcessError(1, args) from exc
+    if username not in user_db:
+        raise subprocess.CalledProcessError(1, args)
+    existing = user_db[username]
+    user_db[username] = pwd.struct_passwd(
+        (
+            existing.pw_name,
+            existing.pw_passwd,
+            existing.pw_uid,
+            existing.pw_gid,
+            existing.pw_gecos,
+            new_home,
+            existing.pw_shell,
+        )
+    )
+    return subprocess.CompletedProcess(args, 0, "", "")
+
+
+def _fake_useradd(args: list, user_db: dict) -> subprocess.CompletedProcess:
+    """Simulate `useradd --home-dir HOME --create-home --shell /bin/bash USER`."""
+    if len(args) < 7 or not args[0].endswith("useradd"):
+        raise subprocess.CalledProcessError(1, args)
+    if "--system" in args:
+        raise subprocess.CalledProcessError(1, args)
+    if "--create-home" not in args or "--shell" not in args or "/bin/bash" not in args:
+        raise subprocess.CalledProcessError(1, args)
+    username = args[-1]
+    try:
+        home = args[args.index("--home-dir") + 1]
+    except (ValueError, IndexError) as exc:
+        raise subprocess.CalledProcessError(1, args) from exc
+    if username in user_db:
+        raise subprocess.CalledProcessError(9, args)
+    # Pick deterministic fake uid/gid based on username hash to avoid collisions.
+    uid = 50000 + hash(username) % 10000
+    gid = uid
+    user_db[username] = pwd.struct_passwd((username, "x", uid, gid, "", home, "/bin/bash"))
+    return subprocess.CompletedProcess(args, 0, "", "")
+
+
 def _make_fake_useradd(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Provide an in-memory useradd that creates entries seen by pwd.getpwnam."""
+    """Provide an in-memory useradd/usermod that creates entries seen by pwd.getpwnam."""
     user_db: dict[str, pwd.struct_passwd] = {}
 
     def fake_run(args, **_kwargs):
         if args and args[0].endswith("visudo"):
             return subprocess.CompletedProcess(args, 0, "", "")
-        # Validate expected useradd shape:
-        # /usr/sbin/useradd --home-dir HOME --create-home --shell /bin/bash USER
-        if len(args) < 7 or not args[0].endswith("useradd"):
-            raise subprocess.CalledProcessError(1, args)
-        if "--system" in args:
-            raise subprocess.CalledProcessError(1, args)
-        if "--create-home" not in args or "--shell" not in args or "/bin/bash" not in args:
-            raise subprocess.CalledProcessError(1, args)
-        username = args[-1]
-        try:
-            home = args[args.index("--home-dir") + 1]
-        except (ValueError, IndexError) as exc:
-            raise subprocess.CalledProcessError(1, args) from exc
-        if username in user_db:
-            raise subprocess.CalledProcessError(9, args)
-        # Pick deterministic fake uid/gid based on username hash to avoid collisions.
-        uid = 50000 + hash(username) % 10000
-        gid = uid
-        user_db[username] = pwd.struct_passwd((username, "x", uid, gid, "", home, "/bin/bash"))
-        return subprocess.CompletedProcess(args, 0, "", "")
+        if args and args[0].endswith("usermod"):
+            return _fake_usermod(args, user_db)
+        return _fake_useradd(args, user_db)
 
     real_getpwnam = pwd.getpwnam
 
@@ -427,6 +458,35 @@ def test_ensure_user_does_not_chown_existing_home_contents(
     jenkins_gid = pwd.getpwnam("jenkins").pw_gid
     assert call(existing, uid=jenkins_uid, gid=jenkins_gid) not in chown_mock.call_args_list
     assert call(home, uid=jenkins_uid, gid=jenkins_gid) in chown_mock.call_args_list
+
+
+def test_install_relocates_existing_user_home_on_config_change(
+    harness: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    """
+    arrange: agent user already exists with a home directory; jenkins_home config
+        is then changed to point elsewhere.
+    act: run the install hook.
+    assert: usermod is used to update the user's recorded home directory to match
+        the newly configured jenkins_home.
+    """
+    old_home = tmp_path / "old-home"
+    new_home = tmp_path / "new-home"
+    _mock_install_host(monkeypatch, tmp_path)
+    monkeypatch.setattr(apt, "add_package", MagicMock())
+    _make_fake_useradd(monkeypatch)
+    monkeypatch.setattr(os, "chown", MagicMock())
+
+    harness.update_config({"agent_user": "jenkins", "jenkins_home": str(old_home)})
+    harness.begin_with_initial_hooks()
+    assert pwd.getpwnam("jenkins").pw_dir == str(old_home)
+
+    harness.update_config({"jenkins_home": str(new_home)})
+    harness.charm.on.config_changed.emit()
+
+    assert pwd.getpwnam("jenkins").pw_dir == str(new_home)
 
 
 def test_install_grants_passwordless_sudo(
