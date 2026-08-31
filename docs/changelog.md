@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Each revision is versioned by the date of the revision.
 
+## 2026-08-31
+
+- Repair ownership of legacy Jenkins home contents during the transition to a
+  non-root agent user, using a one-time, symlink-safe migration.
+- Restrict `jenkins_home` to dedicated data paths under `/var/lib`, `/srv`, or `/mnt`.
+
 ## 2026-08-17
 
 - Initialize agent state and service lazily during reconciliation so invalid

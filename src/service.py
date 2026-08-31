@@ -7,6 +7,7 @@ import logging
 import os
 import pwd
 import re
+import stat
 
 # Bandit flags the subprocess import; useradd/visudo are trusted fixed-path system binaries.
 import subprocess  # nosec: B404
@@ -26,11 +27,14 @@ REQUIRED_PACKAGES = ["openjdk-21-jre", "sudo"]
 SYSTEMD_SERVICE_CONF_DIR = "/etc/systemd/system/jenkins-agent.service.d/"
 STARTUP_CHECK_TIMEOUT = 30
 STARTUP_CHECK_INTERVAL = 2
-JENKINS_HOME = Path("/var/lib/jenkins")
 JENKINS_AGENT_SYSTEMD_PATH = Path("/etc/systemd/system/jenkins-agent.service")
 JENKINS_AGENT_START_SCRIPT_PATH = Path("/usr/bin/jenkins-agent")
-AGENT_READY_PATH = Path(JENKINS_HOME / ".ready")
 SUDOERS_DROP_IN_DIR = Path("/etc/sudoers.d")
+# This state is deliberately outside the user-writable Jenkins home. It records
+# the last completed ownership migration so update-status hooks remain cheap.
+OWNERSHIP_MIGRATION_STATE_DIR = Path("/var/lib/jenkins-agent")
+OWNERSHIP_MIGRATION_STATE_PATH = OWNERSHIP_MIGRATION_STATE_DIR / "home-ownership"
+_OWNERSHIP_MIGRATION_VERSION = "1"
 
 # Pattern for systemd Environment="KEY=VALUE" lines.
 _SYSTEMD_ENV_PATTERN = re.compile(r'^Environment="([^=]+)=(.*)"$')
@@ -290,8 +294,8 @@ class JenkinsAgentService:
 
         Does nothing for the root user. For non-root users, the user is created
         (regular user, not a system account) with the configured home directory if
-        missing, the home directory is created and owned by the user, and a
-        passwordless sudo entry is written to /etc/sudoers.d. Failures raise
+        missing, the home directory and legacy contents are owned by the user, and
+        a passwordless sudo entry is written to /etc/sudoers.d. Failures raise
         PackageInstallError so the charm does not enable a broken service.
         """
         username = self.state.agent_user
@@ -320,15 +324,130 @@ class JenkinsAgentService:
             except (subprocess.CalledProcessError, FileNotFoundError) as exc:
                 raise PackageInstallError(f"Failed to create user {username}") from exc
         try:
-            if home.is_symlink():
-                raise OSError(f"Jenkins home must not be a symbolic link: {home}")
+            if home.is_symlink() or any(parent.is_symlink() for parent in home.parents):
+                raise OSError(f"Jenkins home must not contain symbolic links: {home}")
             home.mkdir(parents=True, exist_ok=True)
             user_info = pwd.getpwnam(username)
-            os.chown(home, uid=user_info.pw_uid, gid=user_info.pw_gid)
         except (OSError, KeyError) as exc:
             raise PackageInstallError(f"Failed to prepare Jenkins home {home}") from exc
 
+        self._migrate_home_ownership(home, user_info.pw_uid, user_info.pw_gid)
         self._grant_passwordless_sudo(username)
+
+    @staticmethod
+    def _ownership_fingerprint(home: Path, uid: int, gid: int) -> str:
+        """Return the durable key for a completed home ownership migration."""
+        return f"{_OWNERSHIP_MIGRATION_VERSION}\n{home}\n{uid}\n{gid}\n"
+
+    @staticmethod
+    def _chown_home_directories(
+        dirfd: int, dirnames: typing.List[str], home_device: int, uid: int, gid: int
+    ) -> None:
+        """Re-own safe child directories and prune unsafe traversal targets."""
+        for dirname in dirnames[:]:
+            try:
+                entry = os.stat(dirname, dir_fd=dirfd, follow_symlinks=False)
+            except FileNotFoundError:
+                dirnames.remove(dirname)
+                continue
+            if stat.S_ISLNK(entry.st_mode) or entry.st_dev != home_device:
+                dirnames.remove(dirname)
+                continue
+            if entry.st_uid != uid or entry.st_gid != gid:
+                try:
+                    os.chown(
+                        dirname,
+                        uid,
+                        gid,
+                        dir_fd=dirfd,
+                        follow_symlinks=False,
+                    )
+                except FileNotFoundError:
+                    dirnames.remove(dirname)
+
+    @staticmethod
+    def _chown_home_files(
+        dirfd: int, filenames: typing.Iterable[str], home_device: int, uid: int, gid: int
+    ) -> None:
+        """Re-own regular entries on the home filesystem without following links."""
+        for filename in filenames:
+            try:
+                entry = os.stat(filename, dir_fd=dirfd, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            if stat.S_ISLNK(entry.st_mode) or entry.st_dev != home_device:
+                continue
+            if entry.st_uid != uid or entry.st_gid != gid:
+                try:
+                    os.chown(
+                        filename,
+                        uid,
+                        gid,
+                        dir_fd=dirfd,
+                        follow_symlinks=False,
+                    )
+                except FileNotFoundError:
+                    continue
+
+    @staticmethod
+    def _chown_home_tree(home: Path, uid: int, gid: int) -> None:
+        """Re-own entries on the home filesystem without following symlinks.
+
+        ``os.fwalk`` keeps directory file descriptors anchored while traversing,
+        and relative ``stat``/``chown`` calls with ``follow_symlinks=False`` avoid
+        changing an object outside the home if an entry is replaced concurrently.
+        Mount points below the home are not traversed or re-owned.
+        """
+        home_device: typing.Optional[int] = None
+        for _, dirnames, filenames, dirfd in os.fwalk(home, topdown=True, follow_symlinks=False):
+            current_dir = os.fstat(dirfd)
+            if home_device is None:
+                home_device = current_dir.st_dev
+            if current_dir.st_dev != home_device:
+                continue
+            if current_dir.st_uid != uid or current_dir.st_gid != gid:
+                os.fchown(dirfd, uid, gid)
+            JenkinsAgentService._chown_home_directories(dirfd, dirnames, home_device, uid, gid)
+            JenkinsAgentService._chown_home_files(dirfd, filenames, home_device, uid, gid)
+
+    def _migrate_home_ownership(self, home: Path, uid: int, gid: int) -> None:
+        """Migrate legacy home contents once for this path and account identity."""
+        fingerprint = self._ownership_fingerprint(home, uid, gid)
+        state_dir = OWNERSHIP_MIGRATION_STATE_DIR
+        state_path = OWNERSHIP_MIGRATION_STATE_PATH
+        try:
+            if state_path.is_symlink():
+                raise OSError(
+                    f"Ownership migration state must not be a symbolic link: {state_path}"
+                )
+            if state_path.is_file() and state_path.read_text(encoding="utf-8") == fingerprint:
+                return
+        except OSError as exc:
+            raise PackageInstallError("Failed to inspect ownership migration state") from exc
+
+        if home == state_dir or home.is_relative_to(state_dir) or state_dir.is_relative_to(home):
+            raise PackageInstallError("Ownership migration state must be outside Jenkins home")
+
+        try:
+            if self.is_running:
+                systemd.service_stop(AGENT_SERVICE_NAME)
+        except (RuntimeError, systemd.SystemdError) as exc:
+            raise PackageInstallError(
+                "Failed to stop the agent before ownership migration"
+            ) from exc
+
+        try:
+            self._chown_home_tree(home, uid, gid)
+            state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            if state_dir.is_symlink() or state_path.is_symlink():
+                raise OSError("Ownership migration state must not be a symbolic link")
+            os.chmod(state_dir, 0o700)
+            os.chown(state_dir, uid=0, gid=0)
+            state_path.write_text(fingerprint, encoding="utf-8")
+            os.chmod(state_path, 0o600)
+            os.chown(state_path, uid=0, gid=0)
+        except OSError as exc:
+            raise PackageInstallError("Failed to migrate Jenkins home ownership") from exc
 
     def _grant_passwordless_sudo(self, username: str) -> None:
         """Validate and write a passwordless sudo rule for the agent user."""

@@ -21,6 +21,9 @@ AGENT_RELATION = "agent"
 logger = logging.getLogger()
 _AGENT_USER_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]{0,31}\$?$")
 _JENKINS_HOME_PATTERN = re.compile(r"^/[A-Za-z0-9._/-]+$")
+# Only dedicated data locations may be used as a Jenkins home. Keeping the
+# allowlist narrow prevents ownership migration from touching system trees.
+_JENKINS_HOME_PREFIXES = (Path("/var/lib"), Path("/srv"), Path("/mnt"))
 
 
 class Credentials(BaseModel):
@@ -197,6 +200,10 @@ class State:
             or not _JENKINS_HOME_PATTERN.fullmatch(str(jenkins_home))
             or jenkins_home == Path("/")
             or ".." in jenkins_home.parts
+            or not any(
+                jenkins_home != prefix and jenkins_home.is_relative_to(prefix)
+                for prefix in _JENKINS_HOME_PREFIXES
+            )
         ):
             raise InvalidStateError("Invalid agent configuration.")
 

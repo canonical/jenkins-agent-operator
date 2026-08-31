@@ -43,6 +43,10 @@ def test_from_charm_invalid_metadata(
         {"jenkins_home": "relative/path"},
         {"jenkins_home": "/"},
         {"jenkins_home": "/var/lib/../etc/jenkins"},
+        {"jenkins_home": "/etc"},
+        {"jenkins_home": "/usr"},
+        {"jenkins_home": "/var"},
+        {"jenkins_home": "/srv"},
     ],
 )
 def test_from_charm_rejects_unsafe_agent_configuration(harness: ops.testing.Harness, config: dict):
