@@ -75,7 +75,8 @@ config:
       description: |
         Home directory for the Jenkins agent, passed to the agent as -workDir and
         used as the working directory by the systemd service. It must be an absolute
-        dedicated child directory, not a protected system tree. If unset, the agent
+        dedicated child directory with private, root-owned intermediate parents, not
+        a protected system tree. If unset, the agent
         uses /var/lib/jenkins locally and does not manage the Jenkins node remoteFS.
     migrate_legacy_home:
       type: boolean

@@ -9,6 +9,7 @@ import logging
 import os
 import pwd
 import re
+import secrets
 import stat
 
 # Bandit flags the subprocess import; useradd/visudo are trusted fixed-path system binaries.
@@ -355,13 +356,24 @@ class JenkinsAgentService:
         try:
             components = home.parts[1:]
             for index, component in enumerate(components):
+                created = False
                 try:
                     child_fd = os.open(component, flags, dir_fd=current_fd)
                 except FileNotFoundError:
-                    with contextlib.suppress(FileExistsError):
-                        os.mkdir(component, mode=0o755, dir_fd=current_fd)
+                    try:
+                        os.mkdir(
+                            component,
+                            mode=0o750 if index == len(components) - 1 else 0o755,
+                            dir_fd=current_fd,
+                        )
+                    except FileExistsError:
+                        pass
+                    else:
+                        created = True
                     child_fd = os.open(component, flags, dir_fd=current_fd)
                 try:
+                    if created and index == len(components) - 1:
+                        os.fchmod(child_fd, 0o750)  # nosec B103 - private home directory mode
                     child_stat = os.fstat(child_fd)
                     if index < len(components) - 1 and (
                         child_stat.st_uid != 0 or child_stat.st_mode & 0o022
@@ -450,51 +462,73 @@ class JenkinsAgentService:
         dirnames: typing.List[str],
         home_device: int,
         home_mount_id: int,
-        uid: int,
-        gid: int,
     ) -> None:
-        """Re-own safe child directories and prune unsafe traversal targets."""
+        """Prune child directories that are unsafe to traverse.
+
+        Ownership for a directory is changed only after ``fwalk`` yields its
+        retained directory descriptor. This avoids a path-based chown race if a
+        mount or symlink is inserted between validation and traversal.
+        """
         for dirname in dirnames[:]:
             child_info = JenkinsAgentService._open_home_directory(dirfd, dirname, home_device)
             if child_info is None or child_info[1] != home_mount_id:
                 dirnames.remove(dirname)
-                continue
-            entry = child_info[0]
-            if entry.st_uid != uid or entry.st_gid != gid:
-                try:
-                    os.chown(
-                        dirname,
-                        uid,
-                        gid,
-                        dir_fd=dirfd,
-                        follow_symlinks=False,
-                    )
-                except FileNotFoundError:
-                    dirnames.remove(dirname)
+
+    @staticmethod
+    def _open_home_file(
+        dirfd: int, filename: str, home_device: int
+    ) -> typing.Optional[typing.Tuple[int, os.stat_result, int]]:
+        """Open a non-directory entry safely and return its fd and mount ID."""
+        try:
+            entry = os.stat(filename, dir_fd=dirfd, follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+        if (
+            stat.S_ISLNK(entry.st_mode)
+            or not stat.S_ISREG(entry.st_mode)
+            or entry.st_dev != home_device
+        ):
+            return None
+        try:
+            entry_fd = os.open(
+                filename,
+                os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW,
+                dir_fd=dirfd,
+            )
+        except OSError as exc:
+            if exc.errno in (errno.ENOENT, errno.ELOOP, errno.ENOTDIR):
+                return None
+            raise
+        try:
+            current = os.fstat(entry_fd)
+            if stat.S_ISLNK(current.st_mode) or current.st_dev != home_device:
+                os.close(entry_fd)
+                return None
+            return entry_fd, current, JenkinsAgentService._mount_id(entry_fd)
+        except Exception:
+            os.close(entry_fd)
+            raise
 
     @staticmethod
     def _chown_home_files(
-        dirfd: int, filenames: typing.Iterable[str], home_device: int, uid: int, gid: int
+        dirfd: int,
+        filenames: typing.Iterable[str],
+        home_device: int,
+        home_mount_id: int,
+        uid: int,
+        gid: int,
     ) -> None:
         """Re-own regular entries on the home filesystem without following links."""
         for filename in filenames:
+            entry_info = JenkinsAgentService._open_home_file(dirfd, filename, home_device)
+            if entry_info is None:
+                continue
+            entry_fd, entry, mount_id = entry_info
             try:
-                entry = os.stat(filename, dir_fd=dirfd, follow_symlinks=False)
-            except FileNotFoundError:
-                continue
-            if stat.S_ISLNK(entry.st_mode) or entry.st_dev != home_device:
-                continue
-            if entry.st_uid != uid or entry.st_gid != gid:
-                try:
-                    os.chown(
-                        filename,
-                        uid,
-                        gid,
-                        dir_fd=dirfd,
-                        follow_symlinks=False,
-                    )
-                except FileNotFoundError:
-                    continue
+                if mount_id == home_mount_id and (entry.st_uid != uid or entry.st_gid != gid):
+                    os.fchown(entry_fd, uid, gid)
+            finally:
+                os.close(entry_fd)
 
     @staticmethod
     def _chown_home_tree(
@@ -529,11 +563,86 @@ class JenkinsAgentService:
             if current_dir.st_uid != uid or current_dir.st_gid != gid:
                 os.fchown(dirfd, uid, gid)
             JenkinsAgentService._chown_home_directories(
-                dirfd, dirnames, home_device, home_mount_id, uid, gid
+                dirfd, dirnames, home_device, home_mount_id
             )
-            JenkinsAgentService._chown_home_files(dirfd, filenames, home_device, uid, gid)
+            JenkinsAgentService._chown_home_files(
+                dirfd, filenames, home_device, home_mount_id, uid, gid
+            )
         if not saw_home:
             raise FileNotFoundError(home)
+
+    @staticmethod
+    def _open_migration_state() -> int:
+        """Open the root-owned migration state directory without following links."""
+        if OWNERSHIP_MIGRATION_STATE_PATH.parent != OWNERSHIP_MIGRATION_STATE_DIR:
+            raise OSError(
+                "Ownership migration state must be a direct child of its state directory"
+            )
+        state_fd = JenkinsAgentService._open_home(OWNERSHIP_MIGRATION_STATE_DIR)
+        try:
+            state = os.fstat(state_fd)
+            if state.st_uid != 0:
+                raise OSError("Ownership migration state directory is not root-owned")
+            os.fchmod(state_fd, 0o700)
+            state = os.fstat(state_fd)
+            if state.st_uid != 0 or state.st_mode & 0o077:
+                raise OSError("Ownership migration state directory is not private")
+            return state_fd
+        except Exception:
+            os.close(state_fd)
+            raise
+
+    @staticmethod
+    def _read_migration_marker(state_fd: int) -> typing.Optional[str]:
+        """Read a root-owned regular marker relative to the state directory fd."""
+        try:
+            marker_fd = os.open(
+                OWNERSHIP_MIGRATION_STATE_PATH.name,
+                os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW,
+                dir_fd=state_fd,
+            )
+        except FileNotFoundError:
+            return None
+        try:
+            marker = os.fstat(marker_fd)
+            if not stat.S_ISREG(marker.st_mode) or marker.st_uid != 0 or marker.st_mode & 0o077:
+                raise OSError("Ownership migration marker is not a private root-owned file")
+            with os.fdopen(marker_fd, "r", encoding="utf-8") as marker_file:
+                marker_fd = -1
+                return marker_file.read()
+        finally:
+            if marker_fd != -1:
+                os.close(marker_fd)
+
+    @staticmethod
+    def _write_migration_marker(state_fd: int, fingerprint: str) -> None:
+        """Atomically write a private root-owned migration marker relative to state_fd."""
+        marker_name = OWNERSHIP_MIGRATION_STATE_PATH.name
+        temporary_name = f".{marker_name}.{os.getpid()}.{secrets.token_hex(8)}"
+        marker_fd = os.open(
+            temporary_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=state_fd,
+        )
+        try:
+            with os.fdopen(marker_fd, "w", encoding="utf-8") as marker_file:
+                marker_fd = -1
+                marker_file.write(fingerprint)
+                marker_file.flush()
+                os.fchmod(marker_file.fileno(), 0o600)
+                os.fchown(marker_file.fileno(), 0, 0)
+            os.replace(
+                temporary_name,
+                marker_name,
+                src_dir_fd=state_fd,
+                dst_dir_fd=state_fd,
+            )
+        finally:
+            if marker_fd != -1:
+                os.close(marker_fd)
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temporary_name, dir_fd=state_fd)
 
     def _migrate_home_ownership(
         self, home: Path, uid: int, gid: int, *, home_fd: typing.Optional[int] = None
@@ -541,44 +650,40 @@ class JenkinsAgentService:
         """Migrate legacy home contents once for this path and account identity."""
         fingerprint = self._ownership_fingerprint(home, uid, gid)
         state_dir = OWNERSHIP_MIGRATION_STATE_DIR
-        state_path = OWNERSHIP_MIGRATION_STATE_PATH
-        try:
-            if state_path.is_symlink():
-                raise OSError(
-                    f"Ownership migration state must not be a symbolic link: {state_path}"
-                )
-            if state_path.is_file() and state_path.read_text(encoding="utf-8") == fingerprint:
-                return
-        except OSError as exc:
-            raise PackageInstallError("Failed to inspect ownership migration state") from exc
-
         if home == state_dir or home.is_relative_to(state_dir) or state_dir.is_relative_to(home):
             raise PackageInstallError("Ownership migration state must be outside Jenkins home")
 
-        if JENKINS_AGENT_SYSTEMD_PATH.is_file():
-            try:
-                systemd.service_stop(AGENT_SERVICE_NAME)
-                if self.is_running:
-                    raise PackageInstallError(
-                        "Agent service remained running during ownership migration"
-                    )
-            except (RuntimeError, systemd.SystemdError) as exc:
-                raise PackageInstallError(
-                    "Failed to stop the agent before ownership migration"
-                ) from exc
+        try:
+            state_fd = self._open_migration_state()
+        except OSError as exc:
+            raise PackageInstallError("Failed to inspect ownership migration state") from exc
 
         try:
-            self._chown_home_tree(home, uid, gid, home_fd=home_fd)
-            state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-            if state_dir.is_symlink() or state_path.is_symlink():
-                raise OSError("Ownership migration state must not be a symbolic link")
-            os.chmod(state_dir, 0o700)
-            os.chown(state_dir, uid=0, gid=0)
-            state_path.write_text(fingerprint, encoding="utf-8")
-            os.chmod(state_path, 0o600)
-            os.chown(state_path, uid=0, gid=0)
-        except OSError as exc:
-            raise PackageInstallError("Failed to migrate Jenkins home ownership") from exc
+            try:
+                if self._read_migration_marker(state_fd) == fingerprint:
+                    return
+            except OSError as exc:
+                raise PackageInstallError("Failed to inspect ownership migration state") from exc
+
+            if JENKINS_AGENT_SYSTEMD_PATH.is_file():
+                try:
+                    systemd.service_stop(AGENT_SERVICE_NAME)
+                    if self.is_running:
+                        raise PackageInstallError(
+                            "Agent service remained running during ownership migration"
+                        )
+                except (RuntimeError, systemd.SystemdError) as exc:
+                    raise PackageInstallError(
+                        "Failed to stop the agent before ownership migration"
+                    ) from exc
+
+            try:
+                self._chown_home_tree(home, uid, gid, home_fd=home_fd)
+                self._write_migration_marker(state_fd, fingerprint)
+            except OSError as exc:
+                raise PackageInstallError("Failed to migrate Jenkins home ownership") from exc
+        finally:
+            os.close(state_fd)
 
     def _grant_passwordless_sudo(self, username: str) -> None:
         """Validate and write a passwordless sudo rule for the agent user."""

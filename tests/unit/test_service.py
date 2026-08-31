@@ -97,6 +97,9 @@ def _mock_install_host(  # noqa: C901 - test host setup covers multiple platform
     }
     for parent in test_parent_paths.values():
         parent.mkdir(parents=True, exist_ok=True)
+    temporary_root = next(
+        parent for parent in tmp_path.parents if parent.parent == Path(os.sep) / "tmp"
+    )
 
     def fake_mkdir(path, *args, **kwargs):
         if path in test_home_paths:
@@ -117,11 +120,18 @@ def _mock_install_host(  # noqa: C901 - test host setup covers multiple platform
     def fake_fstat(fd):
         result = real_fstat(fd)
         fd_path = os.readlink(f"/proc/self/fd/{fd}")
-        if fd_path == f"{os.sep}tmp" or fd_path.startswith(f"{os.sep}tmp/pytest"):
+        if (
+            fd_path == f"{os.sep}tmp"
+            or fd_path == str(temporary_root)
+            or fd_path.startswith(f"{temporary_root}{os.sep}")
+        ):
             values = list(result)
             values[4] = 0
             values[5] = 0
-            values[0] = (result.st_mode & ~0o7777) | 0o755
+            if fd_path != str(service.OWNERSHIP_MIGRATION_STATE_DIR) and not fd_path.startswith(
+                f"{service.OWNERSHIP_MIGRATION_STATE_DIR}{os.sep}"
+            ):
+                values[0] = (result.st_mode & ~0o7777) | 0o755
             return os.stat_result(values)
         return result
 
@@ -157,6 +167,17 @@ def _mock_install_host(  # noqa: C901 - test host setup covers multiple platform
         unit_path=unit_path,
         script_path=script_path,
     )
+
+
+def _record_fchown(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Path, int, int]]:
+    """Record descriptor ownership changes while descriptors are still open."""
+    calls: list[tuple[Path, int, int]] = []
+
+    def record_fchown(fd: int, uid: int, gid: int) -> None:
+        calls.append((Path(os.readlink(f"/proc/self/fd/{fd}")), uid, gid))
+
+    monkeypatch.setattr(os, "fchown", record_fchown)
+    return calls
 
 
 @pytest.mark.parametrize(
@@ -474,11 +495,12 @@ def test_ensure_user_chowns_existing_home_contents(
     home.mkdir(parents=True)
     existing = home / "existing.txt"
     existing.write_text("old")
-    host = _mock_install_host(monkeypatch, tmp_path)
+    _mock_install_host(monkeypatch, tmp_path)
     monkeypatch.setattr(apt, "add_package", MagicMock())
     _make_fake_useradd(monkeypatch)
     chown_mock = MagicMock()
     monkeypatch.setattr(os, "chown", chown_mock)
+    fchown_calls = _record_fchown(monkeypatch)
 
     harness.update_config(
         {"agent_user": "jenkins", "jenkins_home": str(home), "migrate_legacy_home": True}
@@ -487,15 +509,8 @@ def test_ensure_user_chowns_existing_home_contents(
 
     jenkins_uid = pwd.getpwnam("jenkins").pw_uid
     jenkins_gid = pwd.getpwnam("jenkins").pw_gid
-    assert any(
-        entry.args[0] == "existing.txt"
-        and entry.args[1:] == (jenkins_uid, jenkins_gid)
-        and entry.kwargs["follow_symlinks"] is False
-        for entry in chown_mock.call_args_list
-    )
-    assert any(
-        entry.args[1:] == (jenkins_uid, jenkins_gid) for entry in host.fchown.call_args_list
-    )
+    assert (existing, jenkins_uid, jenkins_gid) in fchown_calls
+    assert not any(entry.args[0] in {home, existing} for entry in chown_mock.call_args_list)
 
 
 def test_install_migrates_home_ownership_only_once(
@@ -522,6 +537,7 @@ def test_install_migrates_home_ownership_only_once(
     monkeypatch.setattr(apt, "add_package", MagicMock())
     chown_mock = MagicMock()
     monkeypatch.setattr(os, "chown", chown_mock)
+    fchown_calls = _record_fchown(monkeypatch)
 
     harness.update_config(
         {"agent_user": "jenkins", "jenkins_home": str(home), "migrate_legacy_home": True}
@@ -530,7 +546,7 @@ def test_install_migrates_home_ownership_only_once(
     harness.charm.on.update_status.emit()
 
     assert (migration_state / "home-ownership").exists()
-    existing_calls = [entry for entry in chown_mock.call_args_list if entry.args[0] == "agent.jar"]
+    existing_calls = [entry for entry in fchown_calls if entry[0] == existing]
     assert len(existing_calls) == 1
 
 
@@ -563,15 +579,13 @@ def test_chown_home_tree_does_not_follow_symlinks_or_mounts(
     chown_mock = MagicMock()
     monkeypatch.setattr(os, "stat", fake_stat)
     monkeypatch.setattr(os, "chown", chown_mock)
+    fchown_calls = _record_fchown(monkeypatch)
 
     service.JenkinsAgentService._chown_home_tree(home, uid=4242, gid=4242)
 
-    assert any(entry.args[0] == "regular" for entry in chown_mock.call_args_list)
-    assert sum(entry.args[0] == "payload" for entry in chown_mock.call_args_list) == 1
-    assert not any(
-        entry.args[0] in {"mounted", "outside-link"} for entry in chown_mock.call_args_list
-    )
-    assert all(entry.kwargs.get("follow_symlinks") is False for entry in chown_mock.call_args_list)
+    assert (regular, 4242, 4242) in fchown_calls
+    assert (regular / "payload", 4242, 4242) in fchown_calls
+    assert not chown_mock.called
 
 
 def test_chown_home_tree_skips_same_device_mounts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -643,6 +657,22 @@ def test_ensure_user_validates_home_for_root_user(monkeypatch: pytest.MonkeyPatc
 
     open_home.assert_called_once_with(home)
     close.assert_called_once_with(123)
+
+
+def test_open_home_creates_private_final_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """A newly created agent home is private to its owner."""
+    _mock_install_host(monkeypatch, tmp_path)
+    home = tmp_path / "fresh-home"
+
+    home_fd = service.JenkinsAgentService._open_home(home)
+    try:
+        mode = home.stat().st_mode & 0o777
+    finally:
+        os.close(home_fd)
+
+    assert mode == 0o750
 
 
 def test_open_home_rejects_writable_parent():
@@ -847,6 +877,30 @@ def test_grant_passwordless_sudo_reports_write_failure(
         instance._grant_passwordless_sudo("jenkins")
 
 
+def test_chown_home_tree_skips_same_device_file_mounts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Ownership migration skips a bind-mounted regular file on the same device."""
+    home = tmp_path / "home"
+    home.mkdir()
+    mounted_file = home / "mounted-file"
+    mounted_file.write_text("data")
+    real_mount_id = service.JenkinsAgentService._mount_id
+    fchown_calls = _record_fchown(monkeypatch)
+
+    def fake_mount_id(fd: int) -> int:
+        mount_id = real_mount_id(fd)
+        if os.readlink(f"/proc/self/fd/{fd}").endswith("/mounted-file"):
+            return mount_id + 1
+        return mount_id
+
+    monkeypatch.setattr(service.JenkinsAgentService, "_mount_id", staticmethod(fake_mount_id))
+
+    service.JenkinsAgentService._chown_home_tree(home, uid=4242, gid=4242)
+
+    assert (mounted_file, 4242, 4242) not in fchown_calls
+
+
 def test_chown_home_tree_skips_entries_with_matching_owner(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
@@ -949,6 +1003,7 @@ def test_migrate_home_ownership_skips_matching_marker(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     """A matching fingerprint avoids stopping or walking the home again."""
+    real_chmod = os.chmod
     _mock_install_host(monkeypatch, tmp_path)
     home = tmp_path / "home"
     home.mkdir()
@@ -957,6 +1012,7 @@ def test_migrate_home_ownership_skips_matching_marker(
     fingerprint = instance._ownership_fingerprint(home, os.getuid(), os.getgid())
     service.OWNERSHIP_MIGRATION_STATE_PATH.parent.mkdir()
     service.OWNERSHIP_MIGRATION_STATE_PATH.write_text(fingerprint)
+    real_chmod(service.OWNERSHIP_MIGRATION_STATE_PATH, 0o600)
     monkeypatch.setattr(systemd, "service_running", MagicMock(side_effect=AssertionError))
     walk = MagicMock(side_effect=AssertionError)
     monkeypatch.setattr(instance, "_chown_home_tree", walk)
@@ -1063,9 +1119,15 @@ def test_migrate_home_ownership_rejects_symlinked_state(
     service.OWNERSHIP_MIGRATION_STATE_PATH.symlink_to(target)
     _begin_with_lazy_service(harness)
     instance = _service(harness)
+    walk = MagicMock()
+    stop = MagicMock()
+    monkeypatch.setattr(instance, "_chown_home_tree", walk)
+    monkeypatch.setattr(systemd, "service_stop", stop)
 
     with pytest.raises(service.PackageInstallError, match="inspect ownership migration state"):
         instance._migrate_home_ownership(home, uid=os.getuid(), gid=os.getgid())
+    assert not walk.called
+    assert not stop.called
 
 
 def test_migrate_home_ownership_rejects_symlinked_state_directory(
@@ -1080,9 +1142,39 @@ def test_migrate_home_ownership_rejects_symlinked_state_directory(
     service.OWNERSHIP_MIGRATION_STATE_DIR.symlink_to(target, target_is_directory=True)
     _begin_with_lazy_service(harness)
     instance = _service(harness)
+    walk = MagicMock()
+    stop = MagicMock()
+    monkeypatch.setattr(instance, "_chown_home_tree", walk)
+    monkeypatch.setattr(systemd, "service_stop", stop)
 
-    with pytest.raises(service.PackageInstallError, match="migrate Jenkins home ownership"):
+    with pytest.raises(service.PackageInstallError, match="inspect ownership migration state"):
         instance._migrate_home_ownership(home, uid=os.getuid(), gid=os.getgid())
+    assert not walk.called
+    assert not stop.called
+
+
+def test_migrate_home_ownership_rejects_symlinked_state_with_marker(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """A matching marker behind a state-directory symlink is never trusted."""
+    _mock_install_host(monkeypatch, tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "home-ownership").write_text("matching marker")
+    service.OWNERSHIP_MIGRATION_STATE_DIR.symlink_to(target, target_is_directory=True)
+    _begin_with_lazy_service(harness)
+    instance = _service(harness)
+    walk = MagicMock()
+    stop = MagicMock()
+    monkeypatch.setattr(instance, "_chown_home_tree", walk)
+    monkeypatch.setattr(systemd, "service_stop", stop)
+
+    with pytest.raises(service.PackageInstallError, match="inspect ownership migration state"):
+        instance._migrate_home_ownership(home, uid=os.getuid(), gid=os.getgid())
+    assert not walk.called
+    assert not stop.called
 
 
 def test_ensure_user_rejects_symlinked_home(
