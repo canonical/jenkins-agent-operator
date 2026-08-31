@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import pwd
 
@@ -42,7 +43,7 @@ def _service(harness: ops.testing.Harness) -> service.JenkinsAgentService:
     return service.JenkinsAgentService(charm_state.State.from_charm(harness.charm))
 
 
-def _mock_install_host(
+def _mock_install_host(  # noqa: C901 - test host setup covers multiple platform seams
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     *,
@@ -75,16 +76,27 @@ def _mock_install_host(
     )
     monkeypatch.setattr(
         charm_state,
-        "_JENKINS_HOME_PREFIXES",
-        (tmp_path, *charm_state._JENKINS_HOME_PREFIXES),
+        "_JENKINS_HOME_PROTECTED_PREFIXES",
+        tuple(
+            prefix
+            for prefix in charm_state._JENKINS_HOME_PROTECTED_PREFIXES
+            if prefix != Path(os.sep) / "tmp"
+        ),
     )
-
     real_mkdir = Path.mkdir
     real_fwalk = os.fwalk
+    real_open = os.open
+    real_fstat = os.fstat
     test_home_paths = {
         Path("/var/lib/jenkins"): tmp_path / "var-lib-jenkins",
         Path("/srv/jenkins"): tmp_path / "srv-jenkins",
     }
+    test_parent_paths = {
+        "var": tmp_path / "var",
+        "srv": tmp_path / "srv",
+    }
+    for parent in test_parent_paths.values():
+        parent.mkdir(parents=True, exist_ok=True)
 
     def fake_mkdir(path, *args, **kwargs):
         if path in test_home_paths:
@@ -94,8 +106,29 @@ def _mock_install_host(
     def fake_fwalk(top=".", *args, **kwargs):
         yield from real_fwalk(test_home_paths.get(Path(top), top), *args, **kwargs)
 
+    def fake_open(path, *args, **kwargs):
+        dir_fd = kwargs.get("dir_fd")
+        if dir_fd is not None and path in test_parent_paths:
+            parent = os.readlink(f"/proc/self/fd/{dir_fd}")
+            if parent == "/":
+                return real_open(test_parent_paths[path], *args, **kwargs)
+        return real_open(test_home_paths.get(Path(path), path), *args, **kwargs)
+
+    def fake_fstat(fd):
+        result = real_fstat(fd)
+        fd_path = os.readlink(f"/proc/self/fd/{fd}")
+        if fd_path == f"{os.sep}tmp" or fd_path.startswith(f"{os.sep}tmp/pytest"):
+            values = list(result)
+            values[4] = 0
+            values[5] = 0
+            values[0] = (result.st_mode & ~0o7777) | 0o755
+            return os.stat_result(values)
+        return result
+
     monkeypatch.setattr(Path, "mkdir", fake_mkdir)
     monkeypatch.setattr(os, "fwalk", fake_fwalk)
+    monkeypatch.setattr(os, "open", fake_open)
+    monkeypatch.setattr(os, "fstat", fake_fstat)
     if mock_fs_ownership:
         monkeypatch.setattr(os, "chmod", MagicMock())
         monkeypatch.setattr(os, "chown", MagicMock())
@@ -105,9 +138,11 @@ def _mock_install_host(
     monkeypatch.setattr(os, "fchown", fchown)
     daemon_reload = MagicMock()
     service_enable = MagicMock()
+    service_stop = MagicMock()
     monkeypatch.setattr(systemd, "service_running", MagicMock(return_value=False))
     monkeypatch.setattr(systemd, "daemon_reload", daemon_reload)
     monkeypatch.setattr(systemd, "service_enable", service_enable)
+    monkeypatch.setattr(systemd, "service_stop", service_stop)
     from_installed = (
         MagicMock() if package_installed else MagicMock(side_effect=apt.PackageNotFoundError)
     )
@@ -117,6 +152,7 @@ def _mock_install_host(
     return SimpleNamespace(
         daemon_reload=daemon_reload,
         service_enable=service_enable,
+        service_stop=service_stop,
         fchown=fchown,
         unit_path=unit_path,
         script_path=script_path,
@@ -367,12 +403,12 @@ def _make_fake_useradd(monkeypatch: pytest.MonkeyPatch) -> None:
         if args and args[0].endswith("visudo"):
             return subprocess.CompletedProcess(args, 0, "", "")
         # Validate expected useradd shape:
-        # /usr/sbin/useradd --home-dir HOME --create-home --shell /bin/bash USER
+        # /usr/sbin/useradd --home-dir HOME --no-create-home --shell /bin/bash USER
         if len(args) < 7 or not args[0].endswith("useradd"):
             raise subprocess.CalledProcessError(1, args)
         if "--system" in args:
             raise subprocess.CalledProcessError(1, args)
-        if "--create-home" not in args or "--shell" not in args or "/bin/bash" not in args:
+        if "--no-create-home" not in args or "--shell" not in args or "/bin/bash" not in args:
             raise subprocess.CalledProcessError(1, args)
         username = args[-1]
         try:
@@ -444,7 +480,9 @@ def test_ensure_user_chowns_existing_home_contents(
     chown_mock = MagicMock()
     monkeypatch.setattr(os, "chown", chown_mock)
 
-    harness.update_config({"agent_user": "jenkins", "jenkins_home": str(home)})
+    harness.update_config(
+        {"agent_user": "jenkins", "jenkins_home": str(home), "migrate_legacy_home": True}
+    )
     harness.begin_with_initial_hooks()
 
     jenkins_uid = pwd.getpwnam("jenkins").pw_uid
@@ -485,7 +523,9 @@ def test_install_migrates_home_ownership_only_once(
     chown_mock = MagicMock()
     monkeypatch.setattr(os, "chown", chown_mock)
 
-    harness.update_config({"agent_user": "jenkins", "jenkins_home": str(home)})
+    harness.update_config(
+        {"agent_user": "jenkins", "jenkins_home": str(home), "migrate_legacy_home": True}
+    )
     _begin_with_lazy_service(harness, run_install=True)
     harness.charm.on.update_status.emit()
 
@@ -534,6 +574,279 @@ def test_chown_home_tree_does_not_follow_symlinks_or_mounts(
     assert all(entry.kwargs.get("follow_symlinks") is False for entry in chown_mock.call_args_list)
 
 
+def test_chown_home_tree_skips_same_device_mounts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Ownership migration also skips a bind mount on the same device."""
+    home = tmp_path / "home"
+    home.mkdir()
+    mounted = home / "mounted"
+    mounted.mkdir()
+    (mounted / "payload").write_text("data")
+    chown_mock = MagicMock()
+    monkeypatch.setattr(os, "chown", chown_mock)
+    monkeypatch.setattr(os, "fchown", MagicMock())
+    real_mount_id = service.JenkinsAgentService._mount_id
+
+    def fake_mount_id(fd: int) -> int:
+        mount_id = real_mount_id(fd)
+        if os.readlink(f"/proc/self/fd/{fd}").endswith("/mounted"):
+            return mount_id + 1
+        return mount_id
+
+    monkeypatch.setattr(service.JenkinsAgentService, "_mount_id", staticmethod(fake_mount_id))
+
+    service.JenkinsAgentService._chown_home_tree(home, uid=4242, gid=4242)
+
+    assert not any(entry.args[0] in {"mounted", "payload"} for entry in chown_mock.call_args_list)
+
+
+def test_chown_home_tree_fails_on_unexpected_walk_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Unexpected traversal errors must prevent a successful migration marker."""
+    home = tmp_path / "home"
+    home.mkdir()
+
+    def failing_fwalk(*args, **kwargs):
+        kwargs["onerror"](PermissionError(errno.EACCES, "permission denied"))
+        yield
+
+    monkeypatch.setattr(os, "fwalk", failing_fwalk)
+
+    with pytest.raises(PermissionError, match="permission denied"):
+        service.JenkinsAgentService._chown_home_tree(home, uid=4242, gid=4242)
+
+
+def test_chown_home_tree_fails_when_home_disappears(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """A missing home itself must not be recorded as a completed migration."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(os, "fwalk", lambda *args, **kwargs: iter(()))
+
+    with pytest.raises(FileNotFoundError):
+        service.JenkinsAgentService._chown_home_tree(home, uid=4242, gid=4242)
+
+
+def test_ensure_user_validates_home_for_root_user(monkeypatch: pytest.MonkeyPatch):
+    """Root agents still use the same symlink-safe home path validation."""
+    home = Path("/srv/jenkins")
+    instance = service.JenkinsAgentService(
+        cast(State, SimpleNamespace(agent_user="root", jenkins_home=home))
+    )
+    open_home = MagicMock(return_value=123)
+    close = MagicMock()
+    monkeypatch.setattr(instance, "_open_home", open_home)
+    monkeypatch.setattr(os, "close", close)
+
+    instance._ensure_user_and_home()
+
+    open_home.assert_called_once_with(home)
+    close.assert_called_once_with(123)
+
+
+def test_open_home_rejects_writable_parent():
+    """Home creation refuses a shared writable parent such as /tmp."""
+    home = Path(os.sep) / "tmp" / "jenkins-agent"
+
+    with pytest.raises(OSError, match="root-owned and private"):
+        service.JenkinsAgentService._open_home(home)
+
+
+def test_ensure_home_owner_reports_fstat_failure(monkeypatch: pytest.MonkeyPatch):
+    """A failure checking the home descriptor is surfaced to installation."""
+    monkeypatch.setattr(os, "fstat", MagicMock(side_effect=OSError("fstat failed")))
+
+    with pytest.raises(service.PackageInstallError, match="set ownership"):
+        service.JenkinsAgentService._ensure_home_owner(123, Path("/srv/jenkins"), 1, 1)
+
+
+@pytest.mark.parametrize(
+    "fdinfo,expected",
+    [
+        ("pos:\t0\n", "Mount ID unavailable"),
+        ("mnt_id:\tnot-a-number\n", "Invalid mount ID"),
+    ],
+)
+def test_mount_id_rejects_invalid_fdinfo(
+    monkeypatch: pytest.MonkeyPatch, fdinfo: str, expected: str
+):
+    """Malformed mount metadata fails closed."""
+    monkeypatch.setattr(Path, "read_text", MagicMock(return_value=fdinfo))
+
+    with pytest.raises(OSError, match=expected):
+        service.JenkinsAgentService._mount_id(123)
+
+
+def test_mount_id_reports_fdinfo_read_failure(monkeypatch: pytest.MonkeyPatch):
+    """An fdinfo read failure fails closed."""
+    monkeypatch.setattr(Path, "read_text", MagicMock(side_effect=OSError("read failed")))
+
+    with pytest.raises(OSError, match="read mount ID"):
+        service.JenkinsAgentService._mount_id(123)
+
+
+def test_open_home_directory_skips_open_races(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """A directory replaced before its no-follow open is skipped."""
+    home = tmp_path / "home"
+    home.mkdir()
+    child = home / "child"
+    child.mkdir()
+    parent_fd = os.open(home, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        monkeypatch.setattr(
+            os, "open", MagicMock(side_effect=PermissionError(errno.EACCES, "denied"))
+        )
+        with pytest.raises(PermissionError, match="denied"):
+            service.JenkinsAgentService._open_home_directory(
+                parent_fd, "child", os.stat(home).st_dev
+            )
+    finally:
+        os.close(parent_fd)
+
+
+def test_open_home_directory_skips_non_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """A child that is no longer a directory is not traversed."""
+    home = tmp_path / "home"
+    home.mkdir()
+    child = home / "child"
+    child.write_text("file")
+    parent_fd = os.open(home, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        result = service.JenkinsAgentService._open_home_directory(
+            parent_fd, "child", os.stat(home).st_dev
+        )
+    finally:
+        os.close(parent_fd)
+
+    assert result is None
+
+
+def test_open_home_directory_skips_changed_child_device(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """A child reported on another device is pruned before it is opened."""
+    home = tmp_path / "home"
+    home.mkdir()
+    child = home / "child"
+    child.mkdir()
+    real_stat = os.stat
+
+    def fake_stat(path, *args, **kwargs):
+        result = real_stat(path, *args, **kwargs)
+        if path == "child":
+            values = list(result)
+            values[2] += 1
+            return os.stat_result(values)
+        return result
+
+    parent_fd = os.open(home, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        monkeypatch.setattr(os, "stat", fake_stat)
+        result = service.JenkinsAgentService._open_home_directory(
+            parent_fd, "child", real_stat(home).st_dev
+        )
+    finally:
+        os.close(parent_fd)
+
+    assert result is None
+
+
+def test_open_home_directory_skips_non_directory_descriptor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """A raced child descriptor that is not a directory is not traversed."""
+    home = tmp_path / "home"
+    home.mkdir()
+    child = home / "child"
+    child.mkdir()
+    parent_fd = os.open(home, os.O_RDONLY | os.O_DIRECTORY)
+    real_close = os.close
+    fake_child_fd = 12345
+    try:
+        monkeypatch.setattr(os, "open", MagicMock(return_value=fake_child_fd))
+        monkeypatch.setattr(os, "fstat", MagicMock(return_value=os.stat(__file__)))
+        monkeypatch.setattr(os, "close", MagicMock())
+        result = service.JenkinsAgentService._open_home_directory(
+            parent_fd, "child", os.stat(home).st_dev
+        )
+    finally:
+        real_close(parent_fd)
+
+    assert result is None
+
+
+def test_chown_home_tree_skips_changed_current_mount(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """A mount change detected after fwalk yields cannot be traversed."""
+    home = tmp_path / "home"
+    child = home / "child"
+    child.mkdir(parents=True)
+    real_mount_id = service.JenkinsAgentService._mount_id
+    child_dirs = MagicMock()
+
+    def fake_mount_id(fd: int) -> int:
+        mount_id = real_mount_id(fd)
+        if os.readlink(f"/proc/self/fd/{fd}").endswith("/child"):
+            return mount_id + 1
+        return mount_id
+
+    monkeypatch.setattr(service.JenkinsAgentService, "_mount_id", staticmethod(fake_mount_id))
+    monkeypatch.setattr(service.JenkinsAgentService, "_chown_home_directories", child_dirs)
+    monkeypatch.setattr(os, "fchown", MagicMock())
+
+    service.JenkinsAgentService._chown_home_tree(home, uid=os.getuid(), gid=os.getgid())
+
+    assert child_dirs.call_count == 1
+
+
+def test_migrate_home_ownership_rejects_running_after_stop(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Migration fails closed if the unit remains active after stop."""
+    host = _mock_install_host(monkeypatch, tmp_path)
+    host.unit_path.write_text("[Service]")
+    home = tmp_path / "home"
+    home.mkdir()
+    _begin_with_lazy_service(harness)
+    instance = _service(harness)
+    monkeypatch.setattr(systemd, "service_running", MagicMock(return_value=True))
+    monkeypatch.setattr(systemd, "service_stop", MagicMock())
+
+    with pytest.raises(service.PackageInstallError, match="remained running"):
+        instance._migrate_home_ownership(home, uid=os.getuid(), gid=os.getgid())
+
+
+def test_grant_passwordless_sudo_reports_validation_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Invalid sudoers content prevents installation."""
+    instance = service.JenkinsAgentService(cast(State, SimpleNamespace()))
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        MagicMock(side_effect=subprocess.CalledProcessError(1, ["visudo"])),
+    )
+
+    with pytest.raises(service.PackageInstallError, match="sudoers content"):
+        instance._grant_passwordless_sudo("jenkins")
+
+
+def test_grant_passwordless_sudo_reports_write_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """A sudoers write failure prevents installation."""
+    instance = service.JenkinsAgentService(cast(State, SimpleNamespace()))
+    sudoers_dir = tmp_path / "sudoers.d"
+    monkeypatch.setattr(service, "SUDOERS_DROP_IN_DIR", sudoers_dir)
+    monkeypatch.setattr(subprocess, "run", MagicMock())
+    monkeypatch.setattr(Path, "write_text", MagicMock(side_effect=OSError("write failed")))
+
+    with pytest.raises(service.PackageInstallError, match="write sudoers"):
+        instance._grant_passwordless_sudo("jenkins")
+
+
 def test_chown_home_tree_skips_entries_with_matching_owner(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
@@ -556,19 +869,58 @@ def test_migrate_home_ownership_stops_running_service(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     """Ownership migration stops a running agent before changing its home."""
-    _mock_install_host(monkeypatch, tmp_path)
+    host = _mock_install_host(monkeypatch, tmp_path)
+    host.unit_path.write_text("[Service]")
     home = tmp_path / "home"
     home.mkdir()
     _begin_with_lazy_service(harness)
     instance = _service(harness)
-    running = MagicMock(return_value=True)
-    stop = MagicMock()
+    running = MagicMock(return_value=False)
+    ordered_calls: list[str] = []
+    stop = MagicMock(side_effect=lambda _: ordered_calls.append("stop"))
     monkeypatch.setattr(systemd, "service_running", running)
     monkeypatch.setattr(systemd, "service_stop", stop)
+    monkeypatch.setattr(
+        instance,
+        "_chown_home_tree",
+        MagicMock(side_effect=lambda *args, **kwargs: ordered_calls.append("walk")),
+    )
 
     instance._migrate_home_ownership(home, uid=os.getuid(), gid=os.getgid())
 
     stop.assert_called_once_with(service.AGENT_SERVICE_NAME)
+    assert ordered_calls == ["stop", "walk"]
+
+
+def test_reconcile_restarts_service_after_home_migration(
+    harness: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    agent_relation_data: dict,
+):
+    """A successful migration leaves the related agent running with new config."""
+    host = _mock_install_host(monkeypatch, tmp_path, package_installed=True)
+    host.unit_path.write_text("legacy unit")
+    home = tmp_path / "home"
+    home.mkdir()
+    config_dir = tmp_path / "override"
+    monkeypatch.setattr(service, "SYSTEMD_SERVICE_CONF_DIR", str(config_dir))
+    monkeypatch.setattr(systemd, "service_running", MagicMock(side_effect=[False, False, False]))
+    service_restart = MagicMock()
+    monkeypatch.setattr(systemd, "service_restart", service_restart)
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "_startup_check", MagicMock(return_value=True)
+    )
+
+    harness.update_config(
+        {"agent_user": "jenkins", "jenkins_home": str(home), "migrate_legacy_home": True}
+    )
+    harness.add_relation(AGENT_RELATION, "jenkins-k8s", unit_data=agent_relation_data)
+    _begin_with_lazy_service(harness, run_install=True)
+
+    assert host.service_stop.call_count == 1
+    assert service_restart.call_count == 1
+    assert harness.charm.unit.status.name == ops.ActiveStatus.name
 
 
 def test_migrate_home_ownership_retries_after_failure(
@@ -670,7 +1022,8 @@ def test_migrate_home_ownership_reports_stop_failure(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     """A running service that cannot be stopped blocks ownership migration."""
-    _mock_install_host(monkeypatch, tmp_path)
+    host = _mock_install_host(monkeypatch, tmp_path)
+    host.unit_path.write_text("[Service]")
     home = tmp_path / "home"
     home.mkdir()
     _begin_with_lazy_service(harness)
@@ -761,10 +1114,20 @@ def test_ensure_user_rejects_symlinked_home_parent(
     _mock_install_host(monkeypatch, tmp_path)
     monkeypatch.setattr(apt, "add_package", MagicMock())
     _make_fake_useradd(monkeypatch)
+    real_run = subprocess.run
+    useradd_calls: list[list[str]] = []
+
+    def recording_run(args, **kwargs):
+        if args and args[0].endswith("useradd"):
+            useradd_calls.append(args)
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", recording_run)
     harness.update_config({"agent_user": "jenkins", "jenkins_home": str(home)})
 
     with pytest.raises(RuntimeError, match="Error installing the agent service"):
         harness.begin_with_initial_hooks()
+    assert useradd_calls == []
 
 
 def test_install_grants_passwordless_sudo(

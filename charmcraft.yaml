@@ -74,9 +74,17 @@ config:
       default: ""
       description: |
         Home directory for the Jenkins agent, passed to the agent as -workDir and
-        used as the working directory by the systemd service. It must be a dedicated
-        child directory below /var/lib, /srv, or /mnt. If unset, the agent uses
-        /var/lib/jenkins locally and does not manage the Jenkins node remoteFS.
+        used as the working directory by the systemd service. It must be an absolute
+        dedicated child directory, not a protected system tree. If unset, the agent
+        uses /var/lib/jenkins locally and does not manage the Jenkins node remoteFS.
+    migrate_legacy_home:
+      type: boolean
+      default: false
+      description: |
+        Migrate existing home contents to the configured agent user on the next
+        reconcile. The default /var/lib/jenkins home is migrated automatically;
+        enable this option when adopting a pre-existing custom home. The migration
+        never follows symbolic links or crosses filesystem mount boundaries.
     websocket_mode:
       type: boolean
       default: true

@@ -8,9 +8,10 @@ Each revision is versioned by the date of the revision.
 
 ## 2026-08-31
 
-- Repair ownership of legacy Jenkins home contents during the transition to a
-  non-root agent user, using a one-time, symlink-safe migration.
-- Restrict `jenkins_home` to dedicated data paths under `/var/lib`, `/srv`, or `/mnt`.
+- Repair legacy Jenkins home ownership once during the transition to a non-root agent,
+  without following symbolic links or crossing filesystem mount boundaries.
+- Preserve existing custom home paths while requiring explicit opt-in for their legacy
+  ownership migration.
 
 ## 2026-08-17
 

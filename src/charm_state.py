@@ -21,9 +21,38 @@ AGENT_RELATION = "agent"
 logger = logging.getLogger()
 _AGENT_USER_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]{0,31}\$?$")
 _JENKINS_HOME_PATTERN = re.compile(r"^/[A-Za-z0-9._/-]+$")
-# Only dedicated data locations may be used as a Jenkins home. Keeping the
-# allowlist narrow prevents ownership migration from touching system trees.
-_JENKINS_HOME_PREFIXES = (Path("/var/lib"), Path("/srv"), Path("/mnt"))
+DEFAULT_JENKINS_HOME = Path("/var/lib/jenkins")
+JENKINS_AGENT_STATE_DIR = Path("/var/lib/jenkins-agent")
+# These trees are not valid Jenkins data roots. Dedicated paths below other
+# absolute roots remain supported for compatibility with existing deployments.
+_JENKINS_HOME_PROTECTED_PREFIXES = (
+    Path("/bin"),
+    Path("/boot"),
+    Path("/dev"),
+    Path("/etc"),
+    Path("/lib"),
+    Path("/lib64"),
+    Path("/proc"),
+    Path("/root"),
+    Path("/run"),
+    Path("/sbin"),
+    Path("/snap"),
+    Path("/sys"),
+    Path(os.sep) / "tmp",
+    Path("/usr"),
+    Path("/var/lib/dpkg"),
+    Path("/var/lib/juju"),
+    JENKINS_AGENT_STATE_DIR,
+)
+
+
+def _is_safe_jenkins_home(path: Path) -> bool:
+    """Return whether a path is a dedicated, non-system data path."""
+    # A root or shared parent directory is not a dedicated Jenkins home. Keep
+    # existing absolute paths such as /home/jenkins and /opt/jenkins valid.
+    if len(path.parts) < 3 or path == Path("/var/lib"):
+        return False
+    return not any(path.is_relative_to(prefix) for prefix in _JENKINS_HOME_PROTECTED_PREFIXES)
 
 
 class Credentials(BaseModel):
@@ -136,6 +165,7 @@ class State:
             partial data is set or the credentials do not belong to current agent.
         unit_data: Data about the current unit.
         websocket_mode: Whether to use WebSocket mode for agent connection.
+        migrate_legacy_home: Whether to migrate legacy home contents for custom paths.
         jenkins_agent_service_name: The Jenkins agent workload container name.
     """
 
@@ -144,8 +174,9 @@ class State:
     unit_data: UnitData
     websocket_mode: bool
     jenkins_agent_service_name: str = "jenkins-agent"
+    migrate_legacy_home: bool = False
     agent_user: str = "jenkins"
-    jenkins_home: Path = Path("/var/lib/jenkins")
+    jenkins_home: Path = DEFAULT_JENKINS_HOME
 
     @classmethod
     def from_charm(cls, charm: ops.CharmBase) -> "State":
@@ -194,16 +225,14 @@ class State:
         # Get user/home config
         agent_user = str(charm.model.config.get("agent_user", "jenkins") or "jenkins")
         configured_home = str(charm.model.config.get("jenkins_home", "") or "")
-        jenkins_home = Path(configured_home or "/var/lib/jenkins")
+        jenkins_home = Path(configured_home or DEFAULT_JENKINS_HOME)
+        migrate_legacy_home = bool(charm.model.config.get("migrate_legacy_home", False))
         if (
             not _AGENT_USER_PATTERN.fullmatch(agent_user)
             or not _JENKINS_HOME_PATTERN.fullmatch(str(jenkins_home))
             or jenkins_home == Path("/")
             or ".." in jenkins_home.parts
-            or not any(
-                jenkins_home != prefix and jenkins_home.is_relative_to(prefix)
-                for prefix in _JENKINS_HOME_PREFIXES
-            )
+            or not _is_safe_jenkins_home(jenkins_home)
         ):
             raise InvalidStateError("Invalid agent configuration.")
 
@@ -216,6 +245,7 @@ class State:
             agent_relation_credentials=agent_relation_credentials,
             unit_data=unit_data,
             websocket_mode=websocket_mode,
+            migrate_legacy_home=migrate_legacy_home,
             agent_user=agent_user,
             jenkins_home=jenkins_home,
         )
