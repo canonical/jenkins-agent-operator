@@ -22,6 +22,10 @@ logger = logging.getLogger()
 JENKINS_APPLICATION_NAME = "jenkins-k8s"
 JENKINS_AGENT_HOME = "/srv/jenkins-agent"
 JENKINS_AGENT_USER = "jenkins-agent-test"
+LEGACY_AGENT_APPLICATION_NAME = "upgrade-agent"
+LEGACY_AGENT_HOME = "/var/lib/jenkins"
+LEGACY_AGENT_LABEL = "ownership-upgrade"
+LEGACY_AGENT_REVISION = 265
 
 
 def _gen_test_job_xml(node_label: str, command: str = 'echo "hello world"'):
@@ -114,6 +118,22 @@ def active_agent_fixture(
 def _initialize_client(url: str, password: str) -> jenkinsapi.jenkins.Jenkins:
     """Initialize a Jenkins API client, retrying until the server is ready."""
     return jenkinsapi.jenkins.Jenkins(baseurl=url, username="admin", password=password, timeout=60)
+
+
+def _direct_juju_server_client(
+    microk8s_juju: jubilant.Juju,
+) -> jenkinsapi.jenkins.Jenkins:
+    """Build a Jenkins client from the server unit's current address."""
+    unit_status = (
+        microk8s_juju.status()
+        .get_units(JENKINS_APPLICATION_NAME)
+        .get(f"{JENKINS_APPLICATION_NAME}/0")
+    )
+    assert unit_status, "Jenkins server unit not found"
+    result = microk8s_juju.run(f"{JENKINS_APPLICATION_NAME}/0", "get-admin-password")
+    password = result.results.get("password", "")
+    assert password, "Failed to get admin password"
+    return _initialize_client(f"http://{unit_status.address}:8080", password)
 
 
 def _fresh_server_client(
@@ -236,6 +256,123 @@ def _wait_for_agent_online(
             pass
         time.sleep(10)
     return False
+
+
+def test_agent_upgrades_from_revision_265(
+    charm: str,
+    arch: str,
+    use_docker: bool,
+    jenkins_agent_requirer: str,
+    juju: jubilant.Juju,
+    microk8s_juju: jubilant.Juju,
+):
+    """Upgrade a root-running rev265 agent and execute its existing job as jenkins."""
+    if use_docker:
+        pytest.skip("Charmhub revision upgrade test requires a Juju-deployed Jenkins server")
+    if arch != "amd64":
+        pytest.skip("Charmhub revision 265 is tested only on amd64")
+
+    jenkins_client = _direct_juju_server_client(microk8s_juju)
+    juju.deploy(
+        "jenkins-agent",
+        app=LEGACY_AGENT_APPLICATION_NAME,
+        channel="latest/edge",
+        revision=LEGACY_AGENT_REVISION,
+        num_units=1,
+        base="ubuntu@24.04",
+        config={"jenkins_agent_labels": LEGACY_AGENT_LABEL},
+        constraints={"arch": "amd64"},
+    )
+    juju.wait(
+        lambda status: jubilant.all_agents_idle(status, LEGACY_AGENT_APPLICATION_NAME),
+        timeout=60 * 20,
+    )
+    juju.integrate(jenkins_agent_requirer, LEGACY_AGENT_APPLICATION_NAME)
+    juju.wait(
+        lambda status: jubilant.all_active(status, LEGACY_AGENT_APPLICATION_NAME),
+        timeout=60 * 15,
+    )
+
+    agent_nodes = [
+        node
+        for node in jenkins_client.get_nodes().values()
+        if LEGACY_AGENT_APPLICATION_NAME in node.name
+    ]
+    assert len(agent_nodes) == 1, f"Expected one legacy agent node, found {len(agent_nodes)}"
+    agent_name = agent_nodes[0].name
+    legacy_node = jenkins_client.get_node(agent_name)
+    legacy_node.set_config_element("remoteFS", LEGACY_AGENT_HOME)
+    unit_name = f"{LEGACY_AGENT_APPLICATION_NAME}/0"
+    juju.cli("ssh", unit_name, "sudo", "systemctl", "restart", "jenkins-agent")
+    assert _wait_for_agent_online(jenkins_client, agent_name), (
+        f"Legacy agent {agent_name} did not reconnect after setting remoteFS"
+    )
+
+    job_name = f"{agent_name}-rev265-upgrade"
+    job = jenkins_client.create_job(
+        job_name,
+        _gen_test_job_xml(
+            LEGACY_AGENT_LABEL,
+            'printf "agent-user=%s\\n" "$(id -un)"; printf "workspace-write-ok\\n" > upgrade-proof',
+        ),
+    )
+
+    def run_job() -> str:
+        queue_item = job.invoke()
+        queue_item.block_until_complete()
+        build = queue_item.get_build()
+        build_status = build.get_status()
+        console = build.get_console()
+        if build_status != "SUCCESS":
+            logger.error("Jenkins revision-upgrade build failed; console:\n%s", console)
+        assert build_status == "SUCCESS"
+        return console
+
+    assert "agent-user=root" in run_job()
+    runtime_paths = [
+        f"{LEGACY_AGENT_HOME}/agent.jar",
+        f"{LEGACY_AGENT_HOME}/remoting",
+        f"{LEGACY_AGENT_HOME}/workspace",
+    ]
+    owners_before = juju.cli(
+        "ssh", unit_name, "sudo", "stat", "-c", "%U", *runtime_paths
+    ).splitlines()
+    assert owners_before == ["root"] * len(runtime_paths)
+
+    juju.refresh(LEGACY_AGENT_APPLICATION_NAME, path=charm)
+
+    def upgraded_and_active(status: jubilant.Status) -> bool:
+        application = status.apps.get(LEGACY_AGENT_APPLICATION_NAME)
+        return bool(
+            application
+            and application.charm_origin == "local"
+            and jubilant.all_active(status, LEGACY_AGENT_APPLICATION_NAME)
+        )
+
+    juju.wait(upgraded_and_active, timeout=60 * 20)
+    assert _wait_for_agent_online(jenkins_client, agent_name), (
+        f"Agent {agent_name} did not come online after the local charm refresh"
+    )
+
+    owners_after = juju.cli(
+        "ssh", unit_name, "sudo", "stat", "-c", "%U", *runtime_paths
+    ).splitlines()
+    assert owners_after == ["jenkins"] * len(runtime_paths)
+    archived_paths = [
+        f"{LEGACY_AGENT_HOME}/.jenkins-agent-legacy-remoting",
+        f"{LEGACY_AGENT_HOME}/.jenkins-agent-legacy-workspace",
+    ]
+    archived_owners = juju.cli(
+        "ssh", unit_name, "sudo", "stat", "-c", "%U", *archived_paths
+    ).splitlines()
+    assert archived_owners == ["root"] * len(archived_paths)
+    archived_proof = f"{archived_paths[1]}/{job_name}/upgrade-proof"
+    juju.cli("ssh", unit_name, "sudo", "test", "-f", archived_proof)
+    fresh_workspace = f"{LEGACY_AGENT_HOME}/workspace/{job_name}"
+    juju.cli("ssh", unit_name, "sudo", "test", "!", "-e", fresh_workspace)
+
+    assert "agent-user=jenkins" in run_job()
+    juju.cli("ssh", unit_name, "sudo", "test", "-f", f"{fresh_workspace}/upgrade-proof")
 
 
 def test_agent_reconnects_after_server_refresh(

@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Each revision is versioned by the date of the revision.
 
+## 2026-08-31
+
+- Install `agent.jar` through a same-directory temporary file so upgrades can
+  atomically replace the root-owned binary left by revision 265.
+- Preserve inaccessible root-era `remoting` and `workspace` runtime directories
+  before creating writable replacements for the dedicated agent user.
+
 ## 2026-08-17
 
 - Initialize agent state and service lazily during reconciliation so invalid
