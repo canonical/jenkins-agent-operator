@@ -402,13 +402,13 @@ def test_render_file_uses_configured_owner(
     assert call(home, uid=jenkins_uid, gid=jenkins_gid) in chown_mock.call_args_list
 
 
-def test_ensure_user_does_not_chown_existing_home_contents(
+def test_ensure_user_chowns_existing_home_contents(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     """
     arrange: Harness with agent_user=jenkins, jenkins_home pre-existing with a file.
     act: run the install hook.
-    assert: only the home directory is chowned to jenkins.
+    assert: the home directory and its existing contents are chowned to jenkins.
     """
     home = tmp_path / "jenkins-home"
     home.mkdir(parents=True)
@@ -425,7 +425,7 @@ def test_ensure_user_does_not_chown_existing_home_contents(
 
     jenkins_uid = pwd.getpwnam("jenkins").pw_uid
     jenkins_gid = pwd.getpwnam("jenkins").pw_gid
-    assert call(existing, uid=jenkins_uid, gid=jenkins_gid) not in chown_mock.call_args_list
+    assert call(existing, uid=jenkins_uid, gid=jenkins_gid) in chown_mock.call_args_list
     assert call(home, uid=jenkins_uid, gid=jenkins_gid) in chown_mock.call_args_list
 
 

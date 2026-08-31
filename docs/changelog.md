@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Each revision is versioned by the date of the revision.
 
+## 2026-08-31
+
+- Re-own existing Jenkins home contents when the agent runs as a non-root user,
+  allowing upgrades from root-based revisions to overwrite the existing agent binary.
+
 ## 2026-08-17
 
 - Initialize agent state and service lazily during reconciliation so invalid
@@ -22,8 +27,7 @@ Each revision is versioned by the date of the revision.
 - Render systemd environment values with systemd escaping instead of HTML
   escaping, reject line-breaking control characters, and avoid logging secrets.
 - Fail installation when the agent account, home directory, package setup, or
-  privileged-rule validation cannot be completed; only the configured home
-  directory itself is re-owned.
+  privileged-rule validation cannot be completed.
 
 ## 2026-07-06
 

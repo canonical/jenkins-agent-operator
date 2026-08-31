@@ -290,8 +290,9 @@ class JenkinsAgentService:
 
         Does nothing for the root user. For non-root users, the user is created
         (regular user, not a system account) with the configured home directory if
-        missing, the home directory is created and owned by the user, and a
-        passwordless sudo entry is written to /etc/sudoers.d. Failures raise
+        missing, the home directory and its existing non-symbolic-link contents are
+        owned by the user, and a passwordless sudo entry is written to /etc/sudoers.d.
+        Failures raise
         PackageInstallError so the charm does not enable a broken service.
         """
         username = self.state.agent_user
@@ -325,6 +326,9 @@ class JenkinsAgentService:
             home.mkdir(parents=True, exist_ok=True)
             user_info = pwd.getpwnam(username)
             os.chown(home, uid=user_info.pw_uid, gid=user_info.pw_gid)
+            for path in home.rglob("*"):
+                if not path.is_symlink():
+                    os.chown(path, uid=user_info.pw_uid, gid=user_info.pw_gid)
         except (OSError, KeyError) as exc:
             raise PackageInstallError(f"Failed to prepare Jenkins home {home}") from exc
 
