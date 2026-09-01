@@ -11,8 +11,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
-import pytest
-
 import service
 from charm_state import State
 
