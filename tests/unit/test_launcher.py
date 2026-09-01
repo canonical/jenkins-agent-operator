@@ -27,6 +27,7 @@ def _run_launcher(
     *,
     reject_direct_download: bool = False,
     fail_download: bool = False,
+    fail_http: bool = False,
     fail_move: bool = False,
 ) -> SimpleNamespace:
     """Render and run the launcher against deterministic fake curl and java commands."""
@@ -39,16 +40,29 @@ def _run_launcher(
         """#!/bin/bash
 set -eu
 output=""
+fail_seen=false
 while [ "$#" -gt 0 ]; do
     case "$1" in
         -o|--output)
             output="$2"
             shift 2
             ;;
+        --fail)
+            fail_seen=true
+            shift
+            ;;
         *) shift ;;
     esac
 done
 printf '%s\\n' "$output" > "$FAKE_CURL_OUTPUT"
+if [ "${FAKE_CURL_HTTP_ERROR:-false}" = true ]; then
+    if [ "$fail_seen" = true ]; then
+        echo "simulated HTTP error" >&2
+        exit 22
+    fi
+    printf 'error-page' > "$output"
+    exit 0
+fi
 if [ "${FAKE_CURL_REJECT_DIRECT:-false}" = true ] && [ "$output" = "$JENKINS_HOME/agent.jar" ]; then
     echo "legacy agent.jar is not writable" >&2
     exit 23
@@ -96,6 +110,7 @@ exit 1
         "FAKE_JAVA_CALLED": str(java_called),
         "FAKE_CURL_REJECT_DIRECT": str(reject_direct_download).lower(),
         "FAKE_CURL_FAIL": str(fail_download).lower(),
+        "FAKE_CURL_HTTP_ERROR": str(fail_http).lower(),
     }
     result = subprocess.run(  # nosec B603 - launcher and commands are test fixtures
         [str(launcher)], capture_output=True, text=True, env=env, check=False
@@ -130,6 +145,22 @@ def test_launcher_cleans_partial_download_and_preserves_previous_jar(tmp_path: P
     agent_jar.write_text("legacy-agent")
 
     run = _run_launcher(tmp_path, home, fail_download=True)
+
+    assert run.result.returncode == 1
+    assert "Unable to download agent binary" in run.result.stderr
+    assert agent_jar.read_text() == "legacy-agent"
+    assert not list(home.glob(".agent.jar.*"))
+    assert not run.java_called.exists()
+
+
+def test_launcher_rejects_http_error_and_preserves_previous_jar(tmp_path: Path):
+    """An HTTP error cannot replace the last working agent binary."""
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    agent_jar = home / "agent.jar"
+    agent_jar.write_text("legacy-agent")
+
+    run = _run_launcher(tmp_path, home, fail_http=True)
 
     assert run.result.returncode == 1
     assert "Unable to download agent binary" in run.result.stderr
