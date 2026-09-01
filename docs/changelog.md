@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Each revision is versioned by the date of the revision.
 
+## 2026-08-31
+
+- Repair legacy Jenkins home ownership once during the transition to a non-root agent,
+  without following symbolic links or crossing filesystem mount boundaries.
+- Preserve existing custom home paths while requiring explicit opt-in for their legacy
+  ownership migration.
+
 ## 2026-08-17
 
 - Initialize agent state and service lazily during reconciliation so invalid

@@ -43,6 +43,17 @@ def test_from_charm_invalid_metadata(
         {"jenkins_home": "relative/path"},
         {"jenkins_home": "/"},
         {"jenkins_home": "/var/lib/../etc/jenkins"},
+        {"jenkins_home": "/etc"},
+        {"jenkins_home": "/etc/jenkins"},
+        {"jenkins_home": "/usr"},
+        {"jenkins_home": "/usr/local/jenkins"},
+        {"jenkins_home": "/var"},
+        {"jenkins_home": "/var/lib"},
+        {"jenkins_home": "/var/lib/dpkg"},
+        {"jenkins_home": "/var/lib/juju"},
+        {"jenkins_home": "/var/lib/jenkins-agent"},
+        {"jenkins_home": "/srv"},
+        {"jenkins_home": f"{os.sep}tmp/jenkins"},
     ],
 )
 def test_from_charm_rejects_unsafe_agent_configuration(harness: ops.testing.Harness, config: dict):
@@ -52,6 +63,19 @@ def test_from_charm_rejects_unsafe_agent_configuration(harness: ops.testing.Harn
 
     with pytest.raises(charm_state.InvalidStateError, match=r"Invalid agent configuration"):
         charm_state.State.from_charm(charm=harness.charm)
+
+
+@pytest.mark.parametrize(
+    "jenkins_home", ["/home/jenkins", "/opt/jenkins", "/data/jenkins", "/srv/jenkins"]
+)
+def test_from_charm_accepts_existing_dedicated_home_paths(
+    harness: ops.testing.Harness, jenkins_home: str
+):
+    """Keep previously valid dedicated absolute home paths compatible."""
+    harness.update_config({"jenkins_home": jenkins_home})
+    harness.begin()
+
+    assert charm_state.State.from_charm(harness.charm).jenkins_home.as_posix() == jenkins_home
 
 
 def test_agent_meta_uses_configured_jenkins_home_as_remote_fs(
