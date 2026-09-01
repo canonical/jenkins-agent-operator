@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Each revision is versioned by the date of the revision.
 
+## 2026-09-01
+
+- Install the agent binary and readiness marker through same-directory temporary files
+  so an upgrade can replace stale root-owned entries without partially overwriting them.
+
 ## 2026-08-17
 
 - Initialize agent state and service lazily during reconciliation so invalid
