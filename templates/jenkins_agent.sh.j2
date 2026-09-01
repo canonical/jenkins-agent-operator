@@ -62,7 +62,7 @@ install_agent_jar() {
     trap cleanup_temporary_file EXIT
 
     info "Fetching the agent binary"
-    if ! curl --connect-timeout 1200 "${JENKINS_URL}/jnlpJars/agent.jar" -o "$TEMPORARY_FILE"; then
+    if ! curl --fail --connect-timeout 1200 "${JENKINS_URL}/jnlpJars/agent.jar" -o "$TEMPORARY_FILE"; then
         err "Unable to download agent binary"
         return 1
     fi
