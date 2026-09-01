@@ -120,22 +120,6 @@ def _initialize_client(url: str, password: str) -> jenkinsapi.jenkins.Jenkins:
     return jenkinsapi.jenkins.Jenkins(baseurl=url, username="admin", password=password, timeout=60)
 
 
-def _direct_juju_server_client(
-    microk8s_juju: jubilant.Juju,
-) -> jenkinsapi.jenkins.Jenkins:
-    """Build a Jenkins client from the server unit's current address."""
-    unit_status = (
-        microk8s_juju.status()
-        .get_units(JENKINS_APPLICATION_NAME)
-        .get(f"{JENKINS_APPLICATION_NAME}/0")
-    )
-    assert unit_status, "Jenkins server unit not found"
-    result = microk8s_juju.run(f"{JENKINS_APPLICATION_NAME}/0", "get-admin-password")
-    password = result.results.get("password", "")
-    assert password, "Failed to get admin password"
-    return _initialize_client(f"http://{unit_status.address}:8080", password)
-
-
 def _fresh_server_client(
     microk8s_juju: jubilant.Juju, traefik_k8s_application: str
 ) -> jenkinsapi.jenkins.Jenkins:
@@ -265,6 +249,8 @@ def test_agent_upgrades_from_revision_265(
     jenkins_agent_requirer: str,
     juju: jubilant.Juju,
     microk8s_juju: jubilant.Juju,
+    ingressed_jenkins_server: str,
+    traefik_k8s_application: str,
 ):
     """Upgrade a root-running rev265 agent and execute its existing job as jenkins."""
     if use_docker:
@@ -272,7 +258,9 @@ def test_agent_upgrades_from_revision_265(
     if arch != "amd64":
         pytest.skip("Charmhub revision 265 is tested only on amd64")
 
-    jenkins_client = _direct_juju_server_client(microk8s_juju)
+    # The test can run after a server refresh, so use the stable ingress rather than
+    # an ephemeral Jenkins unit address.
+    jenkins_client = _fresh_server_client(microk8s_juju, traefik_k8s_application)
     juju.deploy(
         "jenkins-agent",
         app=LEGACY_AGENT_APPLICATION_NAME,
