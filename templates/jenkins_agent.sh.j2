@@ -46,10 +46,65 @@ if [ "$CONFIG_MISSING" == true ]; then
 fi
 
 info "Fetching the agent binary"
-if ! curl --connect-timeout 1200 "${JENKINS_URL}/jnlpJars/agent.jar" -o "${JENKINS_HOME}/agent.jar"; then
-    err Unable to download agent binary
+AGENT_JAR="${JENKINS_HOME}/agent.jar"
+if ! AGENT_JAR_TMP="$(mktemp -- "${JENKINS_HOME}/.agent.jar.XXXXXX")"; then
+    err "Unable to create a temporary file for the agent binary"
     exit 1
 fi
+cleanup_agent_jar_tmp() {
+    rm -f -- "$AGENT_JAR_TMP"
+}
+trap cleanup_agent_jar_tmp EXIT
+if ! curl --connect-timeout 1200 "${JENKINS_URL}/jnlpJars/agent.jar" -o "$AGENT_JAR_TMP"; then
+    err "Unable to download agent binary"
+    exit 1
+fi
+if ! mv -fT -- "$AGENT_JAR_TMP" "$AGENT_JAR"; then
+    err "Unable to install agent binary"
+    exit 1
+fi
+trap - EXIT
+
+prepare_runtime_directory() {
+    local name="$1"
+    local runtime_path="${JENKINS_HOME}/${name}"
+    local archive_path="${JENKINS_HOME}/.jenkins-agent-legacy-${name}"
+
+    if [ ! -e "$runtime_path" ] && [ ! -L "$runtime_path" ]; then
+        return
+    fi
+    if [ ! -L "$runtime_path" ] && [ -d "$runtime_path" ] && \
+       [ -r "$runtime_path" ] && [ -w "$runtime_path" ] && [ -x "$runtime_path" ]; then
+        return
+    fi
+    if [ -e "$archive_path" ] || [ -L "$archive_path" ]; then
+        err "Unable to preserve inaccessible ${name}: ${archive_path} already exists"
+        return 1
+    fi
+
+    info "Preserving inaccessible ${name} as ${archive_path}"
+    if ! mv -nT -- "$runtime_path" "$archive_path"; then
+        err "Unable to preserve inaccessible ${name}"
+        return 1
+    fi
+    # GNU mv -n reports success when it declines an overwrite. Confirm that the
+    # source entry was actually moved before creating its replacement.
+    if [ -e "$runtime_path" ] || [ -L "$runtime_path" ]; then
+        err "Unable to preserve inaccessible ${name}"
+        return 1
+    fi
+    if ! mkdir -- "$runtime_path"; then
+        err "Unable to create a writable ${name} directory; legacy state is at ${archive_path}"
+        return 1
+    fi
+}
+
+# Revision 265 ran as root, so Remoting and job workspaces from that revision
+# are not writable after switching the service to its dedicated user. These are
+# generated runtime directories: move only an inaccessible top-level entry and
+# preserve it for recovery instead of recursively changing its contents.
+prepare_runtime_directory remoting
+prepare_runtime_directory workspace
 
 # Specify the agent as ready
 touch "${JENKINS_HOME}/.ready"
