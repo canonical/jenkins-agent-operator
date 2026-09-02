@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess  # nosec B404 - tests execute disposable fake commands
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,10 +28,12 @@ class LauncherRun:
     java_called: Path
 
 
-def _write_executable(path: Path, content: str) -> None:
-    """Write an executable test command."""
-    path.write_text(content)
-    path.chmod(0o755)
+def _install_fake_command(fake_bin: Path, name: str) -> None:
+    """Copy an executable command fixture into the test's private PATH."""
+    source = Path(__file__).parent / "data" / "launcher" / name
+    target = fake_bin / name
+    shutil.copy2(source, target)
+    target.chmod(0o755)
 
 
 def _run_launcher(
@@ -43,88 +46,19 @@ def _run_launcher(
     """Render and run the launcher with explicit fake-command modes."""
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
+    _install_fake_command(fake_bin, "curl")
+    _install_fake_command(fake_bin, "java")
+    if move_failure != "none":
+        _install_fake_command(fake_bin, "mv")
     curl_output = tmp_path / "curl-output"
     java_called = tmp_path / "java-called"
-    _write_executable(
-        fake_bin / "curl",
-        """#!/bin/bash
-set -eu
-output=""
-fail_seen=false
-while [ "$#" -gt 0 ]; do
-    case "$1" in
-        -o|--output)
-            output="$2"
-            shift 2
-            ;;
-        --fail)
-            fail_seen=true
-            shift
-            ;;
-        *) shift ;;
-    esac
-done
-printf '%s\\n' "$output" > "$FAKE_CURL_OUTPUT"
-case "${FAKE_CURL_MODE:-success}" in
-    http-error)
-        if [ "$fail_seen" = true ]; then
-            echo "simulated HTTP error" >&2
-            exit 22
-        fi
-        printf 'error-page' > "$output"
-        exit 0
-        ;;
-    interrupted)
-        printf 'new-agent' > "$output"
-        echo "simulated interrupted download" >&2
-        exit 23
-        ;;
-    reject-direct)
-        if [ "$output" = "$JENKINS_HOME/agent.jar" ]; then
-            echo "legacy agent.jar is not writable" >&2
-            exit 23
-        fi
-        ;;
-esac
-printf 'new-agent' > "$output"
-""",
-    )
-    _write_executable(
-        fake_bin / "java",
-        """#!/bin/bash
-set -eu
-[ "$1" = "-jar" ]
-[ -f "$2" ]
-[ "$(cat -- "$2")" = "new-agent" ]
-[ -f "$JENKINS_HOME/.ready" ]
-touch -- "$FAKE_JAVA_CALLED"
-""",
-    )
-    if move_failure != "none":
-        _write_executable(
-            fake_bin / "mv",
-            """#!/bin/bash
-set -eu
-destination="${@: -1}"
-if [ "${FAKE_MV_FAILURE:-none}" = "agent-jar" ] && \
-   [ "$destination" = "$JENKINS_HOME/agent.jar" ]; then
-    echo "simulated agent JAR move failure" >&2
-    exit 1
-fi
-if [ "${FAKE_MV_FAILURE:-none}" = "ready" ] && \
-   [ "$destination" = "$JENKINS_HOME/.ready" ]; then
-    echo "simulated readiness marker move failure" >&2
-    exit 1
-fi
-exec /bin/mv "$@"
-""",
-        )
     state = cast(
         State, SimpleNamespace(agent_user="jenkins", jenkins_home=home, websocket_mode=True)
     )
     _, script = service.JenkinsAgentService(state)._render_service_files()
     launcher = tmp_path / "jenkins-agent"
-    _write_executable(launcher, script)
+    launcher.write_text(script)
+    launcher.chmod(0o755)
     env = {
         **os.environ,
         "PATH": f"{fake_bin}:/usr/bin:/bin",

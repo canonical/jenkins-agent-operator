@@ -1,0 +1,43 @@
+#!/bin/bash
+# Copyright 2026 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+set -eu
+output=""
+fail_seen=false
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -o|--output)
+            output="$2"
+            shift 2
+            ;;
+        --fail)
+            fail_seen=true
+            shift
+            ;;
+        *) shift ;;
+    esac
+done
+printf '%s\n' "$output" > "$FAKE_CURL_OUTPUT"
+case "${FAKE_CURL_MODE:-success}" in
+    http-error)
+        if [ "$fail_seen" = true ]; then
+            echo "simulated HTTP error" >&2
+            exit 22
+        fi
+        printf 'error-page' > "$output"
+        exit 0
+        ;;
+    interrupted)
+        printf 'new-agent' > "$output"
+        echo "simulated interrupted download" >&2
+        exit 23
+        ;;
+    reject-direct)
+        if [ "$output" = "$JENKINS_HOME/agent.jar" ]; then
+            echo "legacy agent.jar is not writable" >&2
+            exit 23
+        fi
+        ;;
+esac
+printf 'new-agent' > "$output"
