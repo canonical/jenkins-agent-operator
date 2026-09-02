@@ -23,7 +23,8 @@ as a dedicated service user.
 During the first service start after an upgrade, the launcher replaces `agent.jar`
 and the readiness marker atomically. On the upgrade hook, the charm automatically
 migrates existing `remoting` and `workspace` trees left with legacy ownership when
-it can do so safely. This limited migration preserves paths, contents, and inodes;
+it can do so safely. This limited migration preserves paths, contents, and existing
+filesystem entries;
 it does not archive the Jenkins home or recursively change unrelated state.
 
 If automatic migration fails, the charm leaves the service stopped and enters a
