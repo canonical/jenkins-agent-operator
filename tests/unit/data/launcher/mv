@@ -3,7 +3,7 @@
 # See LICENSE file for licensing details.
 
 set -eu
-destination="${@: -1}"
+destination="${!#}"
 if [ "${FAKE_MV_FAILURE:-none}" = "agent-jar" ] && \
    [ "$destination" = "$JENKINS_HOME/agent.jar" ]; then
     echo "simulated agent JAR move failure" >&2
