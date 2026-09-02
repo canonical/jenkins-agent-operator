@@ -474,6 +474,9 @@ def test_restart_service(
     monkeypatch.setattr(
         service.JenkinsAgentService, "_startup_check", MagicMock(return_value=True)
     )
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "runtime_directories_usable", MagicMock(return_value=True)
+    )
     # The reconcile handler also runs install(); it is exercised separately, so
     # stub it here to keep this test focused on the restart/config-render path.
     monkeypatch.setattr(service.JenkinsAgentService, "install", MagicMock())
@@ -915,3 +918,369 @@ def test_service_files_changed_read_error(monkeypatch: pytest.MonkeyPatch, tmp_p
 
     with pytest.raises(service.FileRenderError, match="read failed"):
         service_instance.service_files_changed()
+
+
+def test_runtime_directories_usable_accepts_missing_entries(tmp_path: Path):
+    """
+    Arrange: the configured Jenkins home has no runtime directories.
+    Act: check runtime-directory usability.
+    Assert: missing entries are accepted for launcher creation.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+
+    assert _runtime_service(home).runtime_directories_usable()
+
+
+def test_runtime_directories_usable_rejects_inaccessible_entry(tmp_path: Path):
+    """
+    Arrange: a runtime directory lacks owner write and search access.
+    Act: check runtime-directory usability.
+    Assert: reconciliation reports that the ownership action is required.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    (home / "remoting").mkdir(mode=0o500)
+
+    assert not _runtime_service(home).runtime_directories_usable()
+
+
+def test_runtime_directories_usable_rejects_non_directory_entry(tmp_path: Path):
+    """
+    Arrange: a known runtime entry is a regular file.
+    Act: check runtime-directory usability.
+    Assert: reconciliation reports that the ownership action is required.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    (home / "workspace").write_text("stale")
+
+    assert not _runtime_service(home).runtime_directories_usable()
+
+
+def test_runtime_directories_usable_rejects_unknown_user(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """
+    Arrange: resolving the configured service user fails.
+    Act: check runtime-directory usability.
+    Assert: reconciliation reports that the ownership action is required.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    service_instance = _runtime_service(home)
+    monkeypatch.setattr(
+        service_instance, "_agent_user_info", MagicMock(side_effect=service.PackageInstallError)
+    )
+
+    assert not service_instance.runtime_directories_usable()
+
+
+def test_migrate_runtime_directories_updates_owner_permissions_without_replacing_data(
+    tmp_path: Path,
+):
+    """
+    Arrange: runtime trees contain data and lack the service user's owner permissions.
+    Act: migrate the legacy runtime directories in place.
+    Assert: data and paths are preserved while owner read/write/search access is restored.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    username = pwd.getpwuid(os.geteuid()).pw_name
+    state = cast(
+        State,
+        SimpleNamespace(agent_user=username, jenkins_home=home, websocket_mode=True),
+    )
+    service_instance = service.JenkinsAgentService(state)
+    files = {}
+    for name in ("remoting", "workspace"):
+        runtime = home / name
+        nested = runtime / "nested"
+        nested.mkdir(parents=True)
+        data = nested / "state"
+        data.write_text(name)
+        data.chmod(0o400)
+        nested.chmod(0o500)
+        runtime.chmod(0o500)
+        files[name] = data
+
+    service_instance.migrate_directory(home)
+
+    for name, data in files.items():
+        runtime = home / name
+        assert data.read_text() == name
+        assert runtime.stat().st_mode & 0o700 == 0o700
+        assert data.parent.stat().st_mode & 0o700 == 0o700
+        assert data.stat().st_mode & 0o600 == 0o600
+
+
+def test_migrate_runtime_directories_rejects_top_level_symlink(tmp_path: Path):
+    """
+    Arrange: a runtime directory entry is a symlink.
+    Act: migrate the legacy runtime directories.
+    Assert: migration fails without following the symlink.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (home / "workspace").symlink_to(outside, target_is_directory=True)
+    username = pwd.getpwuid(os.geteuid()).pw_name
+    state = cast(
+        State,
+        SimpleNamespace(agent_user=username, jenkins_home=home, websocket_mode=True),
+    )
+
+    with pytest.raises(service.PackageInstallError, match="symbolic link"):
+        service.JenkinsAgentService(state).migrate_directory(home / "workspace")
+
+    assert (home / "workspace").is_symlink()
+    assert not (outside / "state").exists()
+
+
+def _runtime_service(home: Path) -> service.JenkinsAgentService:
+    """Build a service instance using the current test user."""
+    username = pwd.getpwuid(os.geteuid()).pw_name
+    state = cast(
+        State, SimpleNamespace(agent_user=username, jenkins_home=home, websocket_mode=True)
+    )
+    return service.JenkinsAgentService(state)
+
+
+def test_migrate_runtime_directories_leaves_usable_tree_untouched(tmp_path: Path):
+    """
+    Arrange: both runtime trees and their contents already have owner access.
+    Act: migrate the legacy runtime directories.
+    Assert: the existing paths and inodes are unchanged.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    inodes = {}
+    for name in ("remoting", "workspace"):
+        runtime = home / name
+        runtime.mkdir(mode=0o750)
+        data = runtime / "state"
+        data.write_text(name)
+        data.chmod(0o600)
+        inodes[name] = (runtime.stat().st_ino, data.stat().st_ino)
+
+    _runtime_service(home).migrate_directory(home)
+
+    for name in ("remoting", "workspace"):
+        runtime = home / name
+        assert (runtime.stat().st_ino, (runtime / "state").stat().st_ino) == inodes[name]
+
+
+def test_migrate_runtime_directories_rejects_non_directory_entry(tmp_path: Path):
+    """
+    Arrange: a runtime directory entry is a regular file.
+    Act: migrate the legacy runtime directories.
+    Assert: migration fails without replacing the entry.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    stale = home / "workspace"
+    stale.write_text("legacy")
+
+    with pytest.raises(service.PackageInstallError, match="existing directory"):
+        _runtime_service(home).migrate_directory(home / "workspace")
+
+    assert stale.read_text() == "legacy"
+
+
+def test_migrate_runtime_directories_does_not_follow_nested_symlink(tmp_path: Path):
+    """
+    Arrange: a runtime tree contains a symlink and an inaccessible directory mode.
+    Act: migrate the legacy runtime directories.
+    Assert: real entries are repaired and the symlink target is not traversed.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    runtime = home / "remoting"
+    runtime.mkdir()
+    target = tmp_path / "outside"
+    target.mkdir()
+    outside_file = target / "state"
+    outside_file.write_text("outside")
+    (runtime / "link").symlink_to(target, target_is_directory=True)
+    runtime.chmod(0o500)
+    (home / "workspace").mkdir(mode=0o750)
+
+    _runtime_service(home).migrate_directory(home)
+
+    assert (runtime / "link").is_symlink()
+    assert outside_file.read_text() == "outside"
+    assert runtime.stat().st_mode & 0o700 == 0o700
+
+
+def test_migrate_runtime_directories_changes_special_entry_owner_only(tmp_path: Path):
+    """
+    Arrange: a runtime tree contains a special file with missing owner write access.
+    Act: migrate the legacy runtime directories.
+    Assert: the special inode is handled without following a path.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    runtime = home / "remoting"
+    runtime.mkdir(mode=0o750)
+    fifo = runtime / "agent.pipe"
+    os.mkfifo(fifo, 0o400)
+    runtime.chmod(0o500)
+    (home / "workspace").mkdir(mode=0o750)
+
+    _runtime_service(home).migrate_directory(home)
+
+    assert fifo.exists()
+    assert fifo.stat().st_mode & 0o777 == 0o400
+
+
+def test_migrate_runtime_directories_reports_unknown_user(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """
+    Arrange: the configured service user is absent from the passwd database.
+    Act: start runtime-directory migration.
+    Assert: installation fails with an actionable user error.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    monkeypatch.setattr(pwd, "getpwnam", MagicMock(side_effect=KeyError))
+
+    with pytest.raises(service.PackageInstallError, match="configured service user"):
+        _runtime_service(home).migrate_directory(home)
+
+
+def test_migrate_runtime_directories_rejects_different_filesystem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """
+    Arrange: a runtime directory is reported on a different filesystem.
+    Act: migrate the legacy runtime directories.
+    Assert: migration fails before changing any entry.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    runtime = home / "workspace"
+    runtime.mkdir()
+    real_lstat = os.lstat
+
+    def fake_lstat(path):
+        result = real_lstat(path)
+        if Path(path) == runtime:
+            values = list(result)
+            values[2] += 1
+            return os.stat_result(values)
+        return result
+
+    monkeypatch.setattr(service.os, "lstat", fake_lstat)
+
+    with pytest.raises(service.PackageInstallError, match="different filesystem"):
+        _runtime_service(home).migrate_directory(home / "workspace")
+
+    assert runtime.is_dir()
+
+
+def test_migrate_runtime_directories_reports_walk_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """
+    Arrange: walking a runtime tree reports an operating-system error.
+    Act: list runtime entries.
+    Assert: migration raises a package-install error.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    runtime = home / "workspace"
+    runtime.mkdir()
+
+    def failing_walk(*_args, **kwargs):
+        kwargs["onerror"](OSError("walk failed"))
+        return iter(())
+
+    monkeypatch.setattr(service.os, "walk", failing_walk)
+
+    with pytest.raises(service.PackageInstallError, match="inspect runtime directory"):
+        _runtime_service(home)._runtime_tree_entries(runtime)
+
+
+def test_migrate_runtime_directories_reports_special_entry_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """
+    Arrange: a runtime tree contains a special entry and ownership update fails.
+    Act: migrate the legacy runtime directories.
+    Assert: migration reports the failed runtime entry.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    runtime = home / "remoting"
+    runtime.mkdir(mode=0o750)
+    fifo = runtime / "agent.pipe"
+    os.mkfifo(fifo, 0o400)
+    runtime.chmod(0o500)
+    (home / "workspace").mkdir(mode=0o750)
+    monkeypatch.setattr(service.os, "chown", MagicMock(side_effect=OSError("chown failed")))
+
+    with pytest.raises(service.PackageInstallError, match=r"agent\.pipe"):
+        _runtime_service(home).migrate_directory(home)
+
+    assert fifo.exists()
+
+
+def test_runtime_directories_usable_reports_stat_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """
+    Arrange: reading a runtime directory entry fails.
+    Act: check runtime-directory usability.
+    Assert: reconciliation reports that the ownership action is required.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    monkeypatch.setattr(service.os, "lstat", MagicMock(side_effect=OSError("stat failed")))
+
+    assert not _runtime_service(home).runtime_directories_usable()
+
+
+def test_migrate_directory_reports_root_inspection_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """
+    Arrange: inspecting the requested directory fails.
+    Act: run the ownership migration.
+    Assert: migration raises a package-install error.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    monkeypatch.setattr(service.os, "lstat", MagicMock(side_effect=OSError("stat failed")))
+
+    with pytest.raises(service.PackageInstallError, match="inspect directory"):
+        _runtime_service(home).migrate_directory(home)
+
+
+def test_migrate_directory_rejects_nested_filesystem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """
+    Arrange: a nested runtime entry is reported on another filesystem.
+    Act: run the ownership migration.
+    Assert: migration fails before changing entries.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    nested = home / "workspace"
+    nested.mkdir()
+    real_lstat = os.lstat
+
+    def fake_lstat(path):
+        result = real_lstat(path)
+        if Path(path) == nested:
+            values = list(result)
+            values[2] += 1
+            return os.stat_result(values)
+        return result
+
+    monkeypatch.setattr(service.os, "lstat", fake_lstat)
+
+    with pytest.raises(service.PackageInstallError, match="different filesystem"):
+        _runtime_service(home).migrate_directory(home)

@@ -6,6 +6,7 @@
 """Test for charm reconcile handler."""
 
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, PropertyMock
@@ -258,3 +259,269 @@ def test_service_configuration_reset_error_blocks_service(
     harness.begin()
     with pytest.raises(RuntimeError, match="Error stopping the agent service"):
         harness.update_config({"jenkins_home": "/srv/jenkins-agent"})
+
+
+def test_reconcile_blocks_until_runtime_ownership_action(
+    harness_with_agent_relation: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    service_mocks: SimpleNamespace,
+):
+    """
+    Arrange: relation credentials are complete but runtime ownership is not usable.
+    Act: reconcile the charm.
+    Assert: the service stays stopped and instructs the operator to run the action.
+    """
+    monkeypatch.setattr(
+        service.JenkinsAgentService,
+        "runtime_directories_usable",
+        MagicMock(return_value=False),
+    )
+    harness = harness_with_agent_relation
+    harness.begin()
+    harness.charm.on.update_status.emit()
+
+    assert harness.charm.unit.status.name == ops.BlockedStatus.name
+    assert "migrate-runtime-directory" in harness.charm.unit.status.message
+    service_mocks.restart.assert_not_called()
+
+
+def test_migrate_runtime_directory_action_defaults_to_configured_home(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """
+    Arrange: a charm with the default agent user and Jenkins home.
+    Act: run the ownership-migration action without a directory parameter.
+    Assert: the configured service user and default Jenkins home are passed to the service.
+    """
+    migration_mock = MagicMock()
+    monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "is_running", PropertyMock(return_value=False)
+    )
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    harness.update_config({"jenkins_home": str(home)})
+    harness.begin()
+
+    output = harness.run_action("migrate-runtime-directory")
+
+    migration_mock.assert_called_once_with(home)
+    assert output.results["directory"] == str(home)
+    assert output.results["user"] == "jenkins"
+
+
+def test_migrate_runtime_directory_action_uses_requested_subdirectory(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """
+    Arrange: a charm configured with a Jenkins home.
+    Act: run the action with a directory under that home.
+    Assert: the requested directory is passed to the ownership migration.
+    """
+    migration_mock = MagicMock()
+    monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "is_running", PropertyMock(return_value=False)
+    )
+    home = tmp_path / "jenkins-home"
+    workspace = home / "workspace"
+    workspace.mkdir(parents=True)
+    harness.update_config({"jenkins_home": str(home)})
+    harness.begin()
+
+    output = harness.run_action("migrate-runtime-directory", {"directory": str(workspace)})
+
+    migration_mock.assert_called_once_with(workspace)
+    assert output.results["directory"] == str(workspace)
+    assert output.results["user"] == "jenkins"
+
+
+@pytest.mark.parametrize("directory", ["relative/path", "../etc", "/", "/etc"])
+def test_migrate_runtime_directory_action_rejects_unsafe_path(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, directory: str
+):
+    """
+    Arrange: a charm with the default Jenkins home.
+    Act: run the action with an unsafe directory path.
+    Assert: the action fails without calling the migration service.
+    """
+    migration_mock = MagicMock()
+    monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "is_running", PropertyMock(return_value=False)
+    )
+    harness.begin()
+
+    with pytest.raises(ops.testing.ActionFailed, match="under the configured Jenkins home"):
+        harness.run_action("migrate-runtime-directory", {"directory": directory})
+
+    migration_mock.assert_not_called()
+
+
+def test_migrate_runtime_directory_action_refuses_running_service(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """
+    Arrange: the agent service is running and the target home exists.
+    Act: run the ownership-migration action.
+    Assert: the action fails without changing the directory.
+    """
+    migration_mock = MagicMock()
+    monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
+    monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    harness.update_config({"jenkins_home": str(home)})
+    harness.begin()
+
+    with pytest.raises(ops.testing.ActionFailed, match="Stop jenkins-agent before"):
+        harness.run_action("migrate-runtime-directory")
+
+    migration_mock.assert_not_called()
+
+
+def test_migrate_runtime_directory_action_rejects_symlink_parent(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """
+    Arrange: the requested path contains a symlink under Jenkins home.
+    Act: run the ownership-migration action.
+    Assert: the action fails without resolving the symlink target.
+    """
+    migration_mock = MagicMock()
+    monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "is_running", PropertyMock(return_value=False)
+    )
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (home / "link").symlink_to(outside, target_is_directory=True)
+    harness.update_config({"jenkins_home": str(home)})
+    harness.begin()
+
+    with pytest.raises(ops.testing.ActionFailed, match="symbolic link"):
+        harness.run_action(
+            "migrate-runtime-directory", {"directory": str(home / "link" / "workspace")}
+        )
+
+    migration_mock.assert_not_called()
+
+
+def test_migrate_runtime_directory_action_reports_service_error(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """
+    Arrange: the ownership service reports an installation error.
+    Act: run the ownership-migration action.
+    Assert: the action exposes the failure to the operator.
+    """
+    migration_mock = MagicMock(side_effect=service.PackageInstallError("migration failed"))
+    monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "is_running", PropertyMock(return_value=False)
+    )
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    harness.update_config({"jenkins_home": str(home)})
+    harness.begin()
+
+    with pytest.raises(ops.testing.ActionFailed, match="migration failed"):
+        harness.run_action("migrate-runtime-directory")
+
+
+def test_migrate_runtime_directory_action_rejects_missing_directory(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """
+    Arrange: the requested directory does not exist under Jenkins home.
+    Act: run the ownership-migration action.
+    Assert: the action fails before attempting ownership changes.
+    """
+    migration_mock = MagicMock()
+    monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "is_running", PropertyMock(return_value=False)
+    )
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    harness.update_config({"jenkins_home": str(home)})
+    harness.begin()
+
+    with pytest.raises(ops.testing.ActionFailed, match="existing directory"):
+        harness.run_action("migrate-runtime-directory", {"directory": str(home / "missing")})
+
+    migration_mock.assert_not_called()
+
+
+def test_migrate_runtime_directory_action_rejects_symlink_home(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """
+    Arrange: the configured Jenkins home is a symbolic link.
+    Act: run the ownership-migration action.
+    Assert: the action refuses to resolve the configured home.
+    """
+    migration_mock = MagicMock()
+    monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
+    real_home = tmp_path / "real-home"
+    real_home.mkdir()
+    home_link = tmp_path / "jenkins-home"
+    home_link.symlink_to(real_home, target_is_directory=True)
+    harness.update_config({"jenkins_home": str(home_link)})
+    harness.begin()
+
+    with pytest.raises(ops.testing.ActionFailed, match="symbolic link"):
+        harness.run_action("migrate-runtime-directory")
+
+    migration_mock.assert_not_called()
+
+
+def test_migrate_runtime_directory_action_reports_resolution_error(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """
+    Arrange: resolving the configured action path reports an operating-system error.
+    Act: run the ownership-migration action.
+    Assert: the action fails with a controlled resolution error.
+    """
+    migration_mock = MagicMock()
+    monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
+    monkeypatch.setattr(Path, "resolve", MagicMock(side_effect=OSError("resolve failed")))
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    harness.update_config({"jenkins_home": str(home)})
+    harness.begin()
+
+    with pytest.raises(ops.testing.ActionFailed, match="Unable to resolve directory"):
+        harness.run_action("migrate-runtime-directory")
+
+    migration_mock.assert_not_called()
+
+
+def test_migrate_runtime_directory_action_rejects_resolved_path_outside_home(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """
+    Arrange: resolving the requested path places it outside Jenkins home.
+    Act: run the ownership-migration action.
+    Assert: the action rejects the resolved path.
+    """
+    migration_mock = MagicMock()
+    monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
+    home = tmp_path / "jenkins-home"
+    workspace = home / "workspace"
+    workspace.mkdir(parents=True)
+
+    def resolve(path: Path, *, strict: bool = False) -> Path:
+        return home if path == home else Path("/outside")
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+    harness.update_config({"jenkins_home": str(home)})
+    harness.begin()
+
+    with pytest.raises(ops.testing.ActionFailed, match="under the configured Jenkins home"):
+        harness.run_action("migrate-runtime-directory", {"directory": str(workspace)})
+
+    migration_mock.assert_not_called()

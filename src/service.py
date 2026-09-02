@@ -7,6 +7,7 @@ import logging
 import os
 import pwd
 import re
+import stat
 
 # Bandit flags the subprocess import; useradd/visudo are trusted fixed-path system binaries.
 import subprocess  # nosec: B404
@@ -30,6 +31,7 @@ JENKINS_HOME = Path("/var/lib/jenkins")
 JENKINS_AGENT_SYSTEMD_PATH = Path("/etc/systemd/system/jenkins-agent.service")
 JENKINS_AGENT_START_SCRIPT_PATH = Path("/usr/bin/jenkins-agent")
 AGENT_READY_PATH = Path(JENKINS_HOME / ".ready")
+RUNTIME_DIRECTORIES = ("remoting", "workspace")
 SUDOERS_DROP_IN_DIR = Path("/etc/sudoers.d")
 
 # Pattern for systemd Environment="KEY=VALUE" lines.
@@ -102,6 +104,37 @@ class JenkinsAgentService:
             ),
         )
         self._template_loader.filters["systemd_quote"] = _systemd_quote
+
+    def runtime_directories_usable(self) -> bool:
+        """Return whether known runtime directories are ready for the agent user.
+
+        Missing directories are valid because the unprivileged launcher creates them.
+        Existing directories must be real directories owned by the configured user and
+        have owner read/write/search access. This is a top-level preflight only; the
+        ownership action performs a recursive migration when needed.
+        """
+        try:
+            user_info = self._agent_user_info()
+        except PackageInstallError:
+            return False
+
+        owner_bits = stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR
+        for name in RUNTIME_DIRECTORIES:
+            path = self.state.jenkins_home / name
+            try:
+                entry_stat = os.lstat(path)
+            except FileNotFoundError:
+                continue
+            except OSError:
+                return False
+            if (
+                not stat.S_ISDIR(entry_stat.st_mode)
+                or entry_stat.st_uid != user_info.pw_uid
+                or entry_stat.st_gid != user_info.pw_gid
+                or stat.S_IMODE(entry_stat.st_mode) & owner_bits != owner_bits
+            ):
+                return False
+        return True
 
     def _render_file(self, path: Path, content: str, mode: int, owner: str = "root") -> None:
         """Write a file to disk, setting its mode and ownership.
@@ -329,6 +362,152 @@ class JenkinsAgentService:
             raise PackageInstallError(f"Failed to prepare Jenkins home {home}") from exc
 
         self._grant_passwordless_sudo(username)
+
+    def _agent_user_info(self) -> pwd.struct_passwd:
+        """Return the configured service user's passwd entry."""
+        try:
+            return pwd.getpwnam(self.state.agent_user)
+        except KeyError as exc:
+            raise PackageInstallError(
+                f"Unable to find configured service user {self.state.agent_user}"
+            ) from exc
+
+    # DEPRECATED compatibility action: remove after root-running revisions are no longer supported.
+    def migrate_directory(self, directory: Path) -> None:
+        """Recursively give a requested Jenkins directory to the service user in place.
+
+        This method is called by the operator-triggered compatibility action. It changes
+        only the requested directory tree, keeps existing paths and contents, and never
+        follows symbolic links. The caller must validate the action path before invoking
+        this method.
+
+        Args:
+            directory: Existing real directory to migrate.
+
+        Raises:
+            PackageInstallError: if the directory cannot be safely migrated.
+        """
+        user_info = self._agent_user_info()
+        if directory.is_symlink():
+            raise PackageInstallError(
+                f"Directory {directory} is a symbolic link; replace it manually"
+            )
+        if not directory.exists() or not directory.is_dir():
+            raise PackageInstallError(f"Directory {directory} must be an existing directory")
+
+        try:
+            root_stat = os.lstat(directory)
+            parent_stat = os.lstat(directory.parent)
+        except OSError as exc:
+            raise PackageInstallError(f"Unable to inspect directory {directory}") from exc
+        if not stat.S_ISDIR(root_stat.st_mode) or not stat.S_ISDIR(parent_stat.st_mode):
+            raise PackageInstallError(f"Directory {directory} must be a real directory")
+        if root_stat.st_dev != parent_stat.st_dev:
+            raise PackageInstallError(
+                f"Directory {directory} is on a different filesystem from its parent"
+            )
+
+        entry_stats = self._runtime_entry_stats(directory, root_stat)
+        logger.info(
+            "Migrating directory %s in place for user %s", directory, self.state.agent_user
+        )
+        # Update descendants first, leaving the root as a retry signal if a step fails.
+        for entry, entry_stat in reversed(entry_stats):
+            self._migrate_runtime_entry(entry, entry_stat, user_info)
+
+    def _runtime_tree_entries(self, runtime_path: Path) -> typing.List[Path]:
+        """List a runtime tree without following symbolic links.
+
+        Args:
+            runtime_path: The top-level runtime directory.
+
+        Returns:
+            The top-level path and all descendants that can be migrated.
+
+        Raises:
+            PackageInstallError: if the tree cannot be walked.
+        """
+        entries = [runtime_path]
+
+        def _walk_error(error: OSError) -> None:
+            raise PackageInstallError(
+                f"Unable to inspect runtime directory {runtime_path}"
+            ) from error
+
+        for root, directories, files in os.walk(
+            runtime_path, topdown=True, followlinks=False, onerror=_walk_error
+        ):
+            root_path = Path(root)
+            child_directories = [root_path / name for name in directories]
+            child_files = [root_path / name for name in files]
+            entries.extend(child_directories)
+            entries.extend(child_files)
+            # os.walk does not descend through symlinked directories when followlinks=False,
+            # but pruning explicitly keeps that safety property clear and stable.
+            directories[:] = [name for name in directories if not (root_path / name).is_symlink()]
+        return entries
+
+    def _runtime_entry_stats(
+        self, runtime_path: Path, root_stat: os.stat_result
+    ) -> typing.List[typing.Tuple[Path, os.stat_result]]:
+        """Collect descendants and reject filesystem boundaries before mutation."""
+        entry_stats = []
+        for entry in self._runtime_tree_entries(runtime_path):
+            try:
+                entry_stat = os.lstat(entry)
+            except OSError as exc:
+                raise PackageInstallError(f"Unable to inspect runtime entry {entry}") from exc
+            if entry_stat.st_dev != root_stat.st_dev:
+                raise PackageInstallError(
+                    f"Directory {runtime_path} contains a different filesystem"
+                )
+            entry_stats.append((entry, entry_stat))
+        return entry_stats
+
+    @staticmethod
+    def _migrate_runtime_entry(
+        entry: Path, entry_stat: os.stat_result, user_info: pwd.struct_passwd
+    ) -> None:
+        """Update one non-symbolic runtime entry without following a swapped path."""
+        if stat.S_ISLNK(entry_stat.st_mode):
+            return
+
+        # Do not restore setuid/setgid bits after changing ownership.
+        original_mode = stat.S_IMODE(entry_stat.st_mode)
+        mode = original_mode & ~(stat.S_ISUID | stat.S_ISGID)
+        owner_bits = stat.S_IRUSR | stat.S_IWUSR
+        if stat.S_ISDIR(entry_stat.st_mode):
+            owner_bits |= stat.S_IXUSR
+        if (
+            original_mode == mode
+            and entry_stat.st_uid == user_info.pw_uid
+            and entry_stat.st_gid == user_info.pw_gid
+            and mode & owner_bits == owner_bits
+        ):
+            return
+
+        try:
+            if stat.S_ISDIR(entry_stat.st_mode) or stat.S_ISREG(entry_stat.st_mode):
+                flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+                if stat.S_ISDIR(entry_stat.st_mode):
+                    flags |= os.O_DIRECTORY
+                descriptor = os.open(entry, flags)
+                try:
+                    os.fchown(descriptor, user_info.pw_uid, user_info.pw_gid)
+                    os.fchmod(descriptor, mode | owner_bits)
+                finally:
+                    os.close(descriptor)
+            else:
+                # Runtime state should contain regular files and directories. If a
+                # special entry exists, change only its own inode and never follow it.
+                os.chown(
+                    entry,
+                    uid=user_info.pw_uid,
+                    gid=user_info.pw_gid,
+                    follow_symlinks=False,
+                )
+        except OSError as exc:
+            raise PackageInstallError(f"Unable to migrate runtime entry {entry}") from exc
 
     def _grant_passwordless_sudo(self, username: str) -> None:
         """Validate and write a passwordless sudo rule for the agent user."""

@@ -96,9 +96,40 @@ write_ready_marker() {
 }
 
 # Specify the agent as ready
+prepare_runtime_directory() {
+    local name="$1"
+    local runtime_path="${JENKINS_HOME}/${name}"
+
+    if [ ! -e "$runtime_path" ] && [ ! -L "$runtime_path" ]; then
+        if ! mkdir --mode=0750 -- "$runtime_path"; then
+            err "Unable to create a writable ${name} directory"
+            return 1
+        fi
+        return 0
+    fi
+    # Existing legacy trees are migrated by the operator action before systemd
+    # drops privileges. Keep this guard so an incomplete migration fails closed.
+    if [ ! -L "$runtime_path" ] && [ -d "$runtime_path" ] && \
+       [ -O "$runtime_path" ] && [ -r "$runtime_path" ] && \
+       [ -w "$runtime_path" ] && [ -x "$runtime_path" ]; then
+        return 0
+    fi
+    err "Unable to use ${name} directory; legacy runtime migration did not complete"
+    return 1
+}
+
+if ! prepare_runtime_directory remoting; then
+    exit 1
+fi
+if ! prepare_runtime_directory workspace; then
+    exit 1
+fi
+
+# Specify the agent as ready
 if ! write_ready_marker; then
     exit 1
 fi
+
 info "Connecting to jenkins"
 # Launch the Jenkins agent with the following flags:
 #   -url: Jenkins server URL (e.g., http://jenkins.example.com:8080)

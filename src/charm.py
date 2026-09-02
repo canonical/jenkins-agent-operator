@@ -7,6 +7,7 @@
 
 import logging
 import typing
+from pathlib import Path
 
 import ops
 
@@ -26,6 +27,10 @@ class JenkinsAgentCharm(ops.CharmBase):
             args: Arguments to initialize the charm base.
         """
         super().__init__(*args)
+        self.framework.observe(
+            self.on.migrate_runtime_directory_action,
+            self._on_migrate_runtime_directory_action,
+        )
         for event in (
             self.on.install,
             self.on.start,
@@ -38,6 +43,60 @@ class JenkinsAgentCharm(ops.CharmBase):
             self.on[AGENT_RELATION].relation_broken,
         ):
             self.framework.observe(event, self._reconcile)
+
+    @staticmethod
+    def _path_contains_symlink(path: Path) -> bool:
+        """Return whether any existing component of an absolute path is a symlink."""
+        current = Path(path.anchor)
+        for part in path.parts[1:]:
+            current /= part
+            if current.is_symlink():
+                return True
+        return False
+
+    def _action_directory(self, state: State, event: ops.ActionEvent) -> Path:
+        """Validate and resolve the optional ownership-action directory."""
+        requested = str(event.params.get("directory") or state.jenkins_home)
+        directory = Path(requested)
+        home = state.jenkins_home
+        if not directory.is_absolute() or directory == Path("/") or ".." in directory.parts:
+            raise ValueError(
+                "directory must be an absolute path under the configured Jenkins home"
+            )
+        if self._path_contains_symlink(home) or self._path_contains_symlink(directory):
+            raise ValueError(f"directory {directory} contains a symbolic link")
+
+        try:
+            resolved_home = home.resolve(strict=False)
+            resolved_directory = directory.resolve(strict=False)
+        except OSError as exc:
+            raise ValueError(f"Unable to resolve directory {directory}") from exc
+        if resolved_directory != resolved_home and resolved_home not in resolved_directory.parents:
+            raise ValueError("directory must be under the configured Jenkins home")
+        if not directory.exists() or not directory.is_dir():
+            raise ValueError(f"directory {directory} must be an existing directory")
+        return directory
+
+    def _on_migrate_runtime_directory_action(self, event: ops.ActionEvent) -> None:
+        """Migrate an operator-selected Jenkins directory to the service user."""
+        try:
+            state = State.from_charm(self)
+            directory = self._action_directory(state, event)
+            agent_service = service.JenkinsAgentService(state)
+            if agent_service.is_running:
+                event.fail("Stop jenkins-agent before migrating directory ownership")
+                return
+            agent_service.migrate_directory(directory)
+        except (InvalidStateError, RuntimeError, ValueError, service.PackageInstallError) as exc:
+            event.fail(str(exc))
+            return
+        event.set_results(
+            {
+                "directory": str(directory),
+                "user": state.agent_user,
+                "message": "Directory ownership migrated in place",
+            }
+        )
 
     def _reconcile(self, _: ops.EventBase) -> None:
         """Reconcile the agent to its desired state on every event.
@@ -130,6 +189,12 @@ class JenkinsAgentCharm(ops.CharmBase):
             logger.info("Agent running with current credentials. No restart needed.")
             agent_service.reset_failed_state()
             self.unit.status = ops.ActiveStatus()
+            return
+
+        if not agent_service.runtime_directories_usable():
+            self.unit.status = ops.BlockedStatus(
+                "Run migrate-runtime-directory after stopping jenkins-agent."
+            )
             return
 
         self.unit.status = ops.MaintenanceStatus("Starting agent service.")
