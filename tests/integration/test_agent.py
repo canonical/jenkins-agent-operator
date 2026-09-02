@@ -69,11 +69,13 @@ def _gen_test_job_xml(node_label: str, command: str = 'echo "hello world"'):
 
 
 def _configure_agent_remote_fs(
-    client: jenkinsapi.jenkins.Jenkins, agent_name: str
+    client: jenkinsapi.jenkins.Jenkins,
+    agent_name: str,
+    remote_fs: str = JENKINS_AGENT_HOME,
 ) -> jenkinsapi.node.Node:
-    """Set the Jenkins controller workspace root to the configured agent home."""
+    """Set the Jenkins controller workspace root for an agent."""
     node = client.get_node(agent_name)
-    node.set_config_element("remoteFS", JENKINS_AGENT_HOME)
+    node.set_config_element("remoteFS", remote_fs)
     return node
 
 
@@ -364,7 +366,9 @@ def test_agent_upgrades_from_revision_265(
     ]
     assert len(agent_nodes) == 1, f"Expected one legacy agent node, found {len(agent_nodes)}"
     agent_name = agent_nodes[0].name
-    legacy_node = _configure_agent_remote_fs(jenkins_client, agent_name)
+    legacy_node = _configure_agent_remote_fs(
+        jenkins_client, agent_name, remote_fs=LEGACY_AGENT_HOME
+    )
     assert legacy_node.get_config_element("remoteFS") == LEGACY_AGENT_HOME
     juju.cli("ssh", unit_name, "sudo", "systemctl", "restart", "jenkins-agent")
     assert _wait_for_agent_online(jenkins_client, agent_name), (
