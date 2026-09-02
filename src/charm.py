@@ -138,6 +138,14 @@ class JenkinsAgentCharm(ops.CharmBase):
         """Reconcile an upgrade and repair legacy runtime ownership when needed."""
         self._reconcile(event, automatic_runtime_migration=True)
 
+    def _block_automatic_runtime_migration(self, error: Exception) -> None:
+        """Set actionable blocked status after automatic migration cannot proceed."""
+        logger.error("Automatic runtime ownership migration failed: %s", error)
+        self.unit.status = ops.BlockedStatus(
+            f"Automatic runtime ownership migration failed: {error}. "
+            "Run the migrate-runtime-directory action after fixing the reported path."
+        )
+
     def _automatic_runtime_migration(self, agent_service: service.JenkinsAgentService) -> bool:
         """Repair known legacy runtime directories before an upgraded service starts."""
         # UpgradeCharmEvent does not expose the previous charm revision. Unsafe
@@ -152,11 +160,7 @@ class JenkinsAgentCharm(ops.CharmBase):
                 agent_service.reset()
             agent_service.migrate_runtime_directories()
         except (service.RuntimeDirectoryError, service.ServiceStopError) as exc:
-            logger.error("Automatic runtime ownership migration failed: %s", exc)
-            self.unit.status = ops.BlockedStatus(
-                f"Automatic runtime ownership migration failed: {exc}. "
-                "Run the migrate-runtime-directory action after fixing the reported path."
-            )
+            self._block_automatic_runtime_migration(exc)
             return False
         return True
 
@@ -178,6 +182,9 @@ class JenkinsAgentCharm(ops.CharmBase):
             try:
                 desired_service.reset()
             except service.ServiceStopError as exc:
+                if automatic_runtime_migration:
+                    self._block_automatic_runtime_migration(exc)
+                    return
                 raise RuntimeError("Error stopping the agent service") from exc
 
         service_files_changed = self._reconcile_installation(desired_service)

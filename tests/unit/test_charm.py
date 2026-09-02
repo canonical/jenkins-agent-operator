@@ -313,6 +313,66 @@ def test_upgrade_automatic_migration_failure_blocks_with_action_guidance(
     service_mocks.restart.assert_not_called()
 
 
+def test_upgrade_automatic_migration_stop_failure_blocks_with_action_guidance(
+    harness_with_agent_relation: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    service_mocks: SimpleNamespace,
+):
+    """
+    Arrange: an active service cannot be stopped before automatic migration.
+    Act: emit the upgrade hook.
+    Assert: the charm blocks instead of attempting migration or restart.
+    """
+    monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "configuration_changed", MagicMock(return_value=True)
+    )
+    service_mocks.reset.side_effect = service.ServiceStopError("stop failed")
+    harness = harness_with_agent_relation
+    harness.begin()
+
+    harness.charm.on.upgrade_charm.emit()
+
+    service_mocks.reset.assert_called_once_with()
+    service_mocks.migrate_runtime_directories.assert_not_called()
+    service_mocks.restart.assert_not_called()
+    assert harness.charm.unit.status.name == ops.BlockedStatus.name
+    assert "migrate-runtime-directory" in harness.charm.unit.status.message
+
+
+def test_upgrade_automatic_migration_failure_leaves_service_stopped(
+    harness_with_agent_relation: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    service_mocks: SimpleNamespace,
+):
+    """
+    Arrange: an active service cannot complete automatic runtime migration.
+    Act: emit the upgrade hook.
+    Assert: the service remains stopped and the charm blocks with action guidance.
+    """
+    monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "configuration_changed", MagicMock(return_value=False)
+    )
+    monkeypatch.setattr(
+        service.JenkinsAgentService,
+        "runtime_directories_usable",
+        MagicMock(return_value=False),
+    )
+    service_mocks.migrate_runtime_directories.side_effect = service.RuntimeDirectoryError(
+        "legacy tree failed"
+    )
+    harness = harness_with_agent_relation
+    harness.begin()
+
+    harness.charm.on.upgrade_charm.emit()
+
+    service_mocks.reset.assert_called_once_with()
+    service_mocks.restart.assert_not_called()
+    assert harness.charm.unit.status.name == ops.BlockedStatus.name
+    assert "migrate-runtime-directory" in harness.charm.unit.status.message
+
+
 def test_upgrade_automatic_migration_stops_active_service(
     harness_with_agent_relation: ops.testing.Harness,
     monkeypatch: pytest.MonkeyPatch,
