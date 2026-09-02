@@ -225,6 +225,34 @@ def _wait_for_build(
     return build_number, build
 
 
+def test_service_process_user_retries_when_main_pid_exits():
+    """
+    Arrange: the first process lookup sees a stale systemd main PID.
+    Act: invoke the decorated process-user helper with no artificial wait.
+    Assert: it refreshes the PID and returns the eventual process user.
+    """
+
+    class Juju:
+        def __init__(self):
+            self.process_lookup_count = 0
+
+        def cli(self, *args):
+            if args[3] == "systemctl":
+                return "100\n"
+            self.process_lookup_count += 1
+            if self.process_lookup_count == 1:
+                raise CLIError(1, list(args), "", "process exited")
+            return "jenkins\n"
+
+    juju = Juju()
+    user = cast(Any, _service_process_user).retry_with(
+        stop=stop_after_attempt(2), wait=wait_fixed(0)
+    )(juju=juju, unit_name="jenkins-agent/0")
+
+    assert user == "jenkins"
+    assert juju.process_lookup_count == 2
+
+
 def _run_job(*, job: jenkinsapi.job.Job, expected_status: str = "SUCCESS") -> tuple[int, str]:
     """Run one job and return its build number and console output."""
     queue_item = job.invoke()
@@ -244,13 +272,26 @@ def _unit_name(juju: jubilant.Juju, application: str) -> str:
     return next(iter(units))
 
 
+_SERVICE_USER_RETRY_ERRORS = (CLIError, ValueError)
+
+
+@retry(
+    retry=retry_if_exception_type(_SERVICE_USER_RETRY_ERRORS),
+    stop=stop_after_attempt(12),
+    wait=wait_fixed(5),
+    reraise=True,
+)
 def _service_process_user(juju: jubilant.Juju, unit_name: str) -> str:
     """Return the OS user of the systemd agent's main process."""
     pid = juju.cli(
         "ssh", unit_name, "sudo", "systemctl", "show", "-p", "MainPID", "--value", "jenkins-agent"
     ).strip()
-    assert pid and pid != "0", "jenkins-agent has no main process"
-    return juju.cli("ssh", unit_name, "sudo", "ps", "-o", "user=", "-p", pid).strip()
+    if not pid or pid == "0":
+        raise ValueError("jenkins-agent has no main process")
+    user = juju.cli("ssh", unit_name, "sudo", "ps", "-o", "user=", "-p", pid).strip()
+    if not user:
+        raise ValueError(f"jenkins-agent process {pid} has no OS user")
+    return user
 
 
 def _service_is_active(juju: jubilant.Juju, unit_name: str) -> bool:
