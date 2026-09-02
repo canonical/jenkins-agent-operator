@@ -1,4 +1,4 @@
-# Copyright 2025 Canonical Ltd.
+# Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
 """Tests for the rendered Jenkins agent launcher."""
@@ -7,12 +7,24 @@ from __future__ import annotations
 
 import os
 import subprocess  # nosec B404 - tests execute disposable fake commands
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
+import pytest
+
 import service
 from charm_state import State
+
+
+@dataclass
+class LauncherRun:
+    """Result and observable files from one launcher execution."""
+
+    result: subprocess.CompletedProcess[str]
+    curl_output: Path
+    java_called: Path
 
 
 def _write_executable(path: Path, content: str) -> None:
@@ -25,12 +37,10 @@ def _run_launcher(
     tmp_path: Path,
     home: Path,
     *,
-    reject_direct_download: bool = False,
-    fail_download: bool = False,
-    fail_http: bool = False,
-    fail_move: bool = False,
-) -> SimpleNamespace:
-    """Render and run the launcher against deterministic fake curl and java commands."""
+    curl_mode: str = "success",
+    move_failure: str = "none",
+) -> LauncherRun:
+    """Render and run the launcher with explicit fake-command modes."""
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     curl_output = tmp_path / "curl-output"
@@ -55,23 +65,28 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 printf '%s\\n' "$output" > "$FAKE_CURL_OUTPUT"
-if [ "${FAKE_CURL_HTTP_ERROR:-false}" = true ]; then
-    if [ "$fail_seen" = true ]; then
-        echo "simulated HTTP error" >&2
-        exit 22
-    fi
-    printf 'error-page' > "$output"
-    exit 0
-fi
-if [ "${FAKE_CURL_REJECT_DIRECT:-false}" = true ] && [ "$output" = "$JENKINS_HOME/agent.jar" ]; then
-    echo "legacy agent.jar is not writable" >&2
-    exit 23
-fi
+case "${FAKE_CURL_MODE:-success}" in
+    http-error)
+        if [ "$fail_seen" = true ]; then
+            echo "simulated HTTP error" >&2
+            exit 22
+        fi
+        printf 'error-page' > "$output"
+        exit 0
+        ;;
+    interrupted)
+        printf 'new-agent' > "$output"
+        echo "simulated interrupted download" >&2
+        exit 23
+        ;;
+    reject-direct)
+        if [ "$output" = "$JENKINS_HOME/agent.jar" ]; then
+            echo "legacy agent.jar is not writable" >&2
+            exit 23
+        fi
+        ;;
+esac
 printf 'new-agent' > "$output"
-if [ "${FAKE_CURL_FAIL:-false}" = true ]; then
-    echo "simulated interrupted download" >&2
-    exit 23
-fi
 """,
     )
     _write_executable(
@@ -85,12 +100,23 @@ set -eu
 touch -- "$FAKE_JAVA_CALLED"
 """,
     )
-    if fail_move:
+    if move_failure != "none":
         _write_executable(
             fake_bin / "mv",
             """#!/bin/bash
-echo "simulated move failure" >&2
-exit 1
+set -eu
+destination="${@: -1}"
+if [ "${FAKE_MV_FAILURE:-none}" = "agent-jar" ] && \
+   [ "$destination" = "$JENKINS_HOME/agent.jar" ]; then
+    echo "simulated agent JAR move failure" >&2
+    exit 1
+fi
+if [ "${FAKE_MV_FAILURE:-none}" = "ready" ] && \
+   [ "$destination" = "$JENKINS_HOME/.ready" ]; then
+    echo "simulated readiness marker move failure" >&2
+    exit 1
+fi
+exec /bin/mv "$@"
 """,
         )
     state = cast(
@@ -108,25 +134,28 @@ exit 1
         "JENKINS_TOKEN": "test-token",
         "FAKE_CURL_OUTPUT": str(curl_output),
         "FAKE_JAVA_CALLED": str(java_called),
-        "FAKE_CURL_REJECT_DIRECT": str(reject_direct_download).lower(),
-        "FAKE_CURL_FAIL": str(fail_download).lower(),
-        "FAKE_CURL_HTTP_ERROR": str(fail_http).lower(),
+        "FAKE_CURL_MODE": curl_mode,
+        "FAKE_MV_FAILURE": move_failure,
     }
     result = subprocess.run(  # nosec B603 - launcher and commands are test fixtures
         [str(launcher)], capture_output=True, text=True, env=env, check=False
     )
-    return SimpleNamespace(result=result, curl_output=curl_output, java_called=java_called)
+    return LauncherRun(result=result, curl_output=curl_output, java_called=java_called)
 
 
 def test_launcher_replaces_unwritable_legacy_agent_jar(tmp_path: Path):
-    """Download beside agent.jar before replacing a legacy unwritable file."""
+    """
+    Arrange: an old agent JAR is present and direct download is rejected.
+    Act: run the launcher.
+    Assert: a same-directory temporary file replaces the old JAR.
+    """
     home = tmp_path / "jenkins-home"
     home.mkdir()
     agent_jar = home / "agent.jar"
     agent_jar.write_text("legacy-agent")
     agent_jar.chmod(0o444)
 
-    run = _run_launcher(tmp_path, home, reject_direct_download=True)
+    run = _run_launcher(tmp_path, home, curl_mode="reject-direct")
 
     assert run.result.returncode == 0, run.result.stderr
     assert agent_jar.read_text() == "new-agent"
@@ -137,30 +166,19 @@ def test_launcher_replaces_unwritable_legacy_agent_jar(tmp_path: Path):
     assert run.java_called.exists()
 
 
-def test_launcher_cleans_partial_download_and_preserves_previous_jar(tmp_path: Path):
-    """An interrupted download leaves the installed agent and home unchanged."""
+@pytest.mark.parametrize("curl_mode", ["interrupted", "http-error"])
+def test_launcher_preserves_previous_jar_on_download_failure(tmp_path: Path, curl_mode: str):
+    """
+    Arrange: an old agent JAR is present and the download fails.
+    Act: run the launcher with an interrupted or HTTP-error response.
+    Assert: the old JAR remains and Java is not started.
+    """
     home = tmp_path / "jenkins-home"
     home.mkdir()
     agent_jar = home / "agent.jar"
     agent_jar.write_text("legacy-agent")
 
-    run = _run_launcher(tmp_path, home, fail_download=True)
-
-    assert run.result.returncode == 1
-    assert "Unable to download agent binary" in run.result.stderr
-    assert agent_jar.read_text() == "legacy-agent"
-    assert not list(home.glob(".agent.jar.*"))
-    assert not run.java_called.exists()
-
-
-def test_launcher_rejects_http_error_and_preserves_previous_jar(tmp_path: Path):
-    """An HTTP error cannot replace the last working agent binary."""
-    home = tmp_path / "jenkins-home"
-    home.mkdir()
-    agent_jar = home / "agent.jar"
-    agent_jar.write_text("legacy-agent")
-
-    run = _run_launcher(tmp_path, home, fail_http=True)
+    run = _run_launcher(tmp_path, home, curl_mode=curl_mode)
 
     assert run.result.returncode == 1
     assert "Unable to download agent binary" in run.result.stderr
@@ -170,7 +188,11 @@ def test_launcher_rejects_http_error_and_preserves_previous_jar(tmp_path: Path):
 
 
 def test_launcher_replaces_agent_jar_symlink_without_writing_target(tmp_path: Path):
-    """Replacing agent.jar must not follow a symlink to another directory."""
+    """
+    Arrange: agent.jar is a symlink to an outside directory.
+    Act: run the launcher.
+    Assert: the symlink entry is replaced and its target remains unchanged.
+    """
     home = tmp_path / "jenkins-home"
     home.mkdir()
     outside = tmp_path / "outside"
@@ -190,7 +212,11 @@ def test_launcher_replaces_agent_jar_symlink_without_writing_target(tmp_path: Pa
 
 
 def test_launcher_replaces_stale_ready_marker_symlink(tmp_path: Path):
-    """The readiness marker is replaced without following a stale symlink."""
+    """
+    Arrange: the readiness marker is a symlink to an outside file.
+    Act: run the launcher.
+    Assert: the marker entry is replaced without changing its target.
+    """
     home = tmp_path / "jenkins-home"
     home.mkdir()
     outside = tmp_path / "outside-ready"
@@ -206,25 +232,56 @@ def test_launcher_replaces_stale_ready_marker_symlink(tmp_path: Path):
     assert run.java_called.exists()
 
 
-def test_launcher_reports_replace_failure_and_cleans_temporary_files(tmp_path: Path):
-    """A failed atomic replacement is clear and leaves no temporary files."""
+def test_launcher_reports_agent_jar_replace_failure_and_cleans_temporary_file(
+    tmp_path: Path,
+):
+    """
+    Arrange: the agent JAR replacement command fails.
+    Act: run the launcher.
+    Assert: the old JAR is preserved and the temporary file is removed.
+    """
     home = tmp_path / "jenkins-home"
     home.mkdir()
     agent_jar = home / "agent.jar"
     agent_jar.write_text("legacy-agent")
 
-    run = _run_launcher(tmp_path, home, fail_move=True)
+    run = _run_launcher(tmp_path, home, move_failure="agent-jar")
 
     assert run.result.returncode == 1
     assert "Unable to install agent binary" in run.result.stderr
     assert agent_jar.read_text() == "legacy-agent"
     assert not list(home.glob(".agent.jar.*"))
+    assert not run.java_called.exists()
+
+
+def test_launcher_reports_ready_marker_replace_failure_and_cleans_temporary_file(
+    tmp_path: Path,
+):
+    """
+    Arrange: the readiness marker replacement command fails after JAR installation.
+    Act: run the launcher.
+    Assert: the previous marker is preserved and Java is not started.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    ready_marker = home / ".ready"
+    ready_marker.write_text("legacy-ready")
+
+    run = _run_launcher(tmp_path, home, move_failure="ready")
+
+    assert run.result.returncode == 1
+    assert "Unable to install readiness marker" in run.result.stderr
+    assert ready_marker.read_text() == "legacy-ready"
     assert not list(home.glob(".ready.*"))
     assert not run.java_called.exists()
 
 
 def test_launcher_quotes_home_paths(tmp_path: Path):
-    """Homes containing spaces and shell metacharacters remain usable."""
+    """
+    Arrange: Jenkins home contains spaces and shell metacharacters.
+    Act: run the launcher.
+    Assert: the agent starts and writes files in the exact home path.
+    """
     home = tmp_path / "home with spaces;and$chars"
     home.mkdir()
 
@@ -233,17 +290,3 @@ def test_launcher_quotes_home_paths(tmp_path: Path):
     assert run.result.returncode == 0, run.result.stderr
     assert (home / "agent.jar").read_text() == "new-agent"
     assert run.java_called.exists()
-
-
-def test_launcher_preserves_legacy_jar_on_move_failure(tmp_path: Path):
-    """A failed rename does not destroy the previous agent binary."""
-    home = tmp_path / "jenkins-home"
-    home.mkdir()
-    agent_jar = home / "agent.jar"
-    agent_jar.write_text("legacy-agent")
-
-    run = _run_launcher(tmp_path, home, fail_move=True)
-
-    assert run.result.returncode == 1
-    assert agent_jar.read_text() == "legacy-agent"
-    assert not list(home.glob(".agent.jar.*"))
