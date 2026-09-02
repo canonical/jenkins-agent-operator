@@ -998,7 +998,7 @@ def test_runtime_directories_usable_rejects_unknown_user(
     home.mkdir()
     service_instance = _runtime_service(home)
     monkeypatch.setattr(
-        service_instance, "_agent_user_info", MagicMock(side_effect=service.PackageInstallError)
+        service_instance, "_agent_user_info", MagicMock(side_effect=service.RuntimeDirectoryError)
     )
 
     assert not service_instance.runtime_directories_usable()
@@ -1059,7 +1059,7 @@ def test_migrate_runtime_directories_rejects_top_level_symlink(tmp_path: Path):
         SimpleNamespace(agent_user=username, jenkins_home=home, websocket_mode=True),
     )
 
-    with pytest.raises(service.PackageInstallError, match="symbolic link"):
+    with pytest.raises(service.RuntimeDirectoryError, match="symbolic link"):
         service.JenkinsAgentService(state).migrate_directory(home / "workspace")
 
     assert (home / "workspace").is_symlink()
@@ -1110,7 +1110,7 @@ def test_migrate_runtime_directories_rejects_non_directory_entry(tmp_path: Path)
     stale = home / "workspace"
     stale.write_text("legacy")
 
-    with pytest.raises(service.PackageInstallError, match="existing directory"):
+    with pytest.raises(service.RuntimeDirectoryError, match="existing directory"):
         _runtime_service(home).migrate_directory(home / "workspace")
 
     assert stale.read_text() == "legacy"
@@ -1174,7 +1174,7 @@ def test_migrate_runtime_directories_reports_unknown_user(
     home.mkdir()
     monkeypatch.setattr(pwd, "getpwnam", MagicMock(side_effect=KeyError))
 
-    with pytest.raises(service.PackageInstallError, match="configured service user"):
+    with pytest.raises(service.RuntimeDirectoryError, match="configured service user"):
         _runtime_service(home).migrate_directory(home)
 
 
@@ -1202,7 +1202,7 @@ def test_migrate_runtime_directories_rejects_different_filesystem(
 
     monkeypatch.setattr(service.os, "lstat", fake_lstat)
 
-    with pytest.raises(service.PackageInstallError, match="different filesystem"):
+    with pytest.raises(service.RuntimeDirectoryError, match="different filesystem"):
         _runtime_service(home).migrate_directory(home / "workspace")
 
     assert runtime.is_dir()
@@ -1227,7 +1227,7 @@ def test_migrate_runtime_directories_reports_walk_error(
 
     monkeypatch.setattr(service.os, "walk", failing_walk)
 
-    with pytest.raises(service.PackageInstallError, match="inspect runtime directory"):
+    with pytest.raises(service.RuntimeDirectoryError, match="inspect runtime directory"):
         _runtime_service(home)._runtime_tree_entries(runtime)
 
 
@@ -1249,7 +1249,7 @@ def test_migrate_runtime_directories_reports_special_entry_error(
     (home / "workspace").mkdir(mode=0o750)
     monkeypatch.setattr(service.os, "chown", MagicMock(side_effect=OSError("chown failed")))
 
-    with pytest.raises(service.PackageInstallError, match=r"agent\.pipe"):
+    with pytest.raises(service.RuntimeDirectoryError, match=r"agent\.pipe"):
         _runtime_service(home).migrate_directory(home)
 
     assert fifo.exists()
@@ -1282,7 +1282,7 @@ def test_migrate_directory_reports_root_inspection_error(
     home.mkdir()
     monkeypatch.setattr(service.os, "lstat", MagicMock(side_effect=OSError("stat failed")))
 
-    with pytest.raises(service.PackageInstallError, match="inspect directory"):
+    with pytest.raises(service.RuntimeDirectoryError, match="inspect directory"):
         _runtime_service(home).migrate_directory(home)
 
 
@@ -1310,5 +1310,5 @@ def test_migrate_directory_rejects_nested_filesystem(
 
     monkeypatch.setattr(service.os, "lstat", fake_lstat)
 
-    with pytest.raises(service.PackageInstallError, match="different filesystem"):
+    with pytest.raises(service.RuntimeDirectoryError, match="different filesystem"):
         _runtime_service(home).migrate_directory(home)

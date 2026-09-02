@@ -7,6 +7,7 @@ import json
 import logging
 import textwrap
 import time
+from typing import Any, cast
 
 import jenkinsapi.build
 import jenkinsapi.custom_exceptions
@@ -18,7 +19,13 @@ import jubilant
 import pytest
 import requests
 from jubilant._juju import CLIError
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    stop_after_delay,
+    wait_fixed,
+)
 
 logger = logging.getLogger()
 
@@ -29,6 +36,8 @@ LEGACY_AGENT_APPLICATION_NAME = "upgrade-agent"
 LEGACY_AGENT_HOME = "/var/lib/jenkins"
 LEGACY_AGENT_LABEL = "ownership-upgrade"
 LEGACY_AGENT_REVISION = 265
+BUILD_POLL_TIMEOUT = 600
+BUILD_POLL_INTERVAL = 5
 
 
 def _gen_test_job_xml(node_label: str, command: str = 'echo "hello world"'):
@@ -146,36 +155,74 @@ def _fresh_server_client(
     return _initialize_client(url, password)
 
 
+def test_wait_for_build_retries_transient_queue_error():
+    """
+    Arrange: the first queue poll raises a transient Jenkins API error.
+    Act: invoke the decorated build-polling function with no artificial wait.
+    Assert: the queue is retried and the assigned build is returned.
+    """
+
+    class QueueItem:
+        def __init__(self):
+            self.poll_count = 0
+
+        def poll(self):
+            self.poll_count += 1
+            if self.poll_count == 1:
+                raise jenkinsapi.custom_exceptions.JenkinsAPIException()
+
+        def get_build_number(self):
+            return 7
+
+    class Build:
+        def poll(self):
+            return {"building": False, "result": "SUCCESS"}
+
+    class Job:
+        def get_build(self, build_number):
+            assert build_number == 7
+            return Build()
+
+    queue_item = QueueItem()
+    build_number, build = cast(Any, _wait_for_build).retry_with(
+        stop=stop_after_attempt(2), wait=wait_fixed(0)
+    )(job=Job(), queue_item=queue_item)
+
+    assert queue_item.poll_count == 2
+    assert build_number == 7
+    assert build.poll()["result"] == "SUCCESS"
+
+
+_BUILD_RETRYABLE_ERRORS = (
+    jenkinsapi.custom_exceptions.JenkinsAPIException,
+    jenkinsapi.custom_exceptions.NotBuiltYet,
+    requests.exceptions.RequestException,
+)
+
+
+@retry(
+    retry=retry_if_exception_type(_BUILD_RETRYABLE_ERRORS),
+    stop=stop_after_delay(BUILD_POLL_TIMEOUT),
+    wait=wait_fixed(BUILD_POLL_INTERVAL),
+    reraise=True,
+)
 def _wait_for_build(
-    *, job: jenkinsapi.job.Job, queue_item: jenkinsapi.queue.QueueItem, timeout: int = 600
+    *, job: jenkinsapi.job.Job, queue_item: jenkinsapi.queue.QueueItem
 ) -> tuple[int, jenkinsapi.build.Build]:
     """Resolve a queue item to a fresh completed build using bounded polling."""
-    deadline = time.monotonic() + timeout
-    build_number: int | None = None
-    while time.monotonic() < deadline:
-        try:
-            queue_item.poll()
-            build_number = queue_item.get_build_number()
-            break
-        except (
-            jenkinsapi.custom_exceptions.JenkinsAPIException,
-            jenkinsapi.custom_exceptions.NotBuiltYet,
-            requests.exceptions.RequestException,
-        ):
-            time.sleep(5)
+    queue_item.poll()
+    build_number = queue_item.get_build_number()
     if build_number is None:
-        raise TimeoutError("Jenkins queue item did not receive a build number")
+        raise jenkinsapi.custom_exceptions.NotBuiltYet()
 
     # Re-fetch by the captured number. Do not use get_last_build(), which can race
     # with another queued build.
     build = job.get_build(build_number)
-    while time.monotonic() < deadline:
-        build_data = build.poll()
-        if not build_data.get("building", True) and build_data.get("result"):
-            build.poll()
-            return build_number, build
-        time.sleep(5)
-    raise TimeoutError(f"Jenkins build #{build_number} did not complete")
+    build_data = build.poll()
+    if build_data.get("building", True) or not build_data.get("result"):
+        raise jenkinsapi.custom_exceptions.NotBuiltYet()
+    build.poll()
+    return build_number, build
 
 
 def _run_job(*, job: jenkinsapi.job.Job, expected_status: str = "SUCCESS") -> tuple[int, str]:

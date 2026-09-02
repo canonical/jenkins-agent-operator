@@ -444,7 +444,7 @@ def test_migrate_runtime_directory_action_reports_service_error(
     Act: run the ownership-migration action.
     Assert: the action exposes the failure to the operator.
     """
-    migration_mock = MagicMock(side_effect=service.PackageInstallError("migration failed"))
+    migration_mock = MagicMock(side_effect=service.RuntimeDirectoryError("migration failed"))
     monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
     monkeypatch.setattr(
         service.JenkinsAgentService, "is_running", PropertyMock(return_value=False)
@@ -563,7 +563,7 @@ def test_migrate_runtime_directory_action_leaves_service_stopped_on_migration_er
     Assert: the service is not restarted and the action reports the migration error.
     """
     reset_mock = MagicMock()
-    migration_mock = MagicMock(side_effect=service.PackageInstallError("migration failed"))
+    migration_mock = MagicMock(side_effect=service.RuntimeDirectoryError("migration failed"))
     restart_mock = MagicMock()
     monkeypatch.setattr(service.JenkinsAgentService, "reset", reset_mock)
     monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)

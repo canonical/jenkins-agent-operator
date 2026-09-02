@@ -94,7 +94,7 @@ class JenkinsAgentCharm(ops.CharmBase):
                     raise RuntimeError("Error stopping the agent service") from exc
             try:
                 agent_service.migrate_directory(directory)
-            except service.PackageInstallError:
+            except service.RuntimeDirectoryError:
                 # Leave a previously running service stopped when migration fails.
                 raise
             if was_running:
@@ -107,7 +107,7 @@ class JenkinsAgentCharm(ops.CharmBase):
                         logger.exception("Failed to leave the agent service stopped")
                     raise RuntimeError("Error restarting the agent service") from exc
                 service_restarted = True
-        except (InvalidStateError, RuntimeError, ValueError, service.PackageInstallError) as exc:
+        except (InvalidStateError, RuntimeError, ValueError, service.RuntimeDirectoryError) as exc:
             event.fail(str(exc))
             return
         message = "Directory ownership migrated in place"

@@ -107,8 +107,8 @@ prepare_runtime_directory() {
         return 0
     fi
     # Keep this predicate in sync with JenkinsAgentService.runtime_directories_usable.
-    # Existing legacy trees are migrated by the operator action before systemd
-    # drops privileges, so an incomplete migration fails closed here too.
+    # systemd can start the service before a Juju reconcile, so the launcher must
+    # fail closed if an existing legacy tree was not migrated first.
     if [ -L "$runtime_path" ]; then
         err "${name} directory is a symbolic link; replace manually before retrying"
         return 1

@@ -62,6 +62,15 @@ class PackageInstallError(Exception):
     """Exception raised when package installation fails."""
 
 
+class RuntimeDirectoryError(Exception):
+    """Exception raised when a runtime tree cannot be safely migrated or checked."""
+
+
+def _raise_runtime_tree_error(runtime_path: Path, error: OSError) -> typing.NoReturn:
+    """Raise a contextual error for an unsuccessful runtime-tree walk."""
+    raise RuntimeDirectoryError(f"Unable to inspect runtime directory {runtime_path}") from error
+
+
 class ServiceRestartError(Exception):
     """Exception raised when failing to start the agent service."""
 
@@ -110,12 +119,12 @@ class JenkinsAgentService:
 
         Missing directories are valid because the unprivileged launcher creates them.
         Existing directories must be real directories owned by the configured user and
-        its primary group, and have owner read/write/search access. This is a top-level
+        its primary group, and have the user's `rwx` permissions. This is a top-level
         preflight only; the ownership action performs a recursive migration when needed.
         """
         try:
             user_info = self._agent_user_info()
-        except PackageInstallError:
+        except RuntimeDirectoryError:
             return False
 
         owner_bits = stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR
@@ -371,7 +380,7 @@ class JenkinsAgentService:
         try:
             return pwd.getpwnam(self.state.agent_user)
         except KeyError as exc:
-            raise PackageInstallError(
+            raise RuntimeDirectoryError(
                 f"Unable to find configured service user {self.state.agent_user}"
             ) from exc
 
@@ -388,28 +397,32 @@ class JenkinsAgentService:
             directory: Existing real directory to migrate.
 
         Raises:
-            PackageInstallError: if the directory cannot be safely migrated.
+            RuntimeDirectoryError: if the directory cannot be safely migrated.
         """
         user_info = self._agent_user_info()
         if directory.is_symlink():
-            raise PackageInstallError(
+            raise RuntimeDirectoryError(
                 f"Directory {directory} is a symbolic link; replace it manually"
             )
         if not directory.exists() or not directory.is_dir():
-            raise PackageInstallError(f"Directory {directory} must be an existing directory")
+            raise RuntimeDirectoryError(f"Directory {directory} must be an existing directory")
 
         try:
             root_stat = os.lstat(directory)
             parent_stat = os.lstat(directory.parent)
         except OSError as exc:
-            raise PackageInstallError(f"Unable to inspect directory {directory}") from exc
+            raise RuntimeDirectoryError(f"Unable to inspect directory {directory}") from exc
         if not stat.S_ISDIR(root_stat.st_mode) or not stat.S_ISDIR(parent_stat.st_mode):
-            raise PackageInstallError(f"Directory {directory} must be a real directory")
+            raise RuntimeDirectoryError(f"Directory {directory} must be a real directory")
+        # Reject a requested mount point before changing anything below it.
         if root_stat.st_dev != parent_stat.st_dev:
-            raise PackageInstallError(
+            raise RuntimeDirectoryError(
                 f"Directory {directory} is on a different filesystem from its parent"
             )
 
+        # Snapshot and validate the complete tree before changing any inode. This
+        # prevents a late nested-mount or inspection failure from leaving an
+        # unreported partial migration.
         entry_stats = self._runtime_entry_stats(directory, root_stat)
         logger.info(
             "Migrating directory %s in place for user %s", directory, self.state.agent_user
@@ -428,17 +441,15 @@ class JenkinsAgentService:
             The top-level path and all descendants that can be migrated.
 
         Raises:
-            PackageInstallError: if the tree cannot be walked.
+            RuntimeDirectoryError: if the tree cannot be walked.
         """
         entries = [runtime_path]
 
-        def _walk_error(error: OSError) -> None:
-            raise PackageInstallError(
-                f"Unable to inspect runtime directory {runtime_path}"
-            ) from error
-
         for root, directories, files in os.walk(
-            runtime_path, topdown=True, followlinks=False, onerror=_walk_error
+            runtime_path,
+            topdown=True,
+            followlinks=False,
+            onerror=lambda error: _raise_runtime_tree_error(runtime_path, error),
         ):
             root_path = Path(root)
             child_directories = [root_path / name for name in directories]
@@ -459,9 +470,9 @@ class JenkinsAgentService:
             try:
                 entry_stat = os.lstat(entry)
             except OSError as exc:
-                raise PackageInstallError(f"Unable to inspect runtime entry {entry}") from exc
+                raise RuntimeDirectoryError(f"Unable to inspect runtime entry {entry}") from exc
             if entry_stat.st_dev != root_stat.st_dev:
-                raise PackageInstallError(
+                raise RuntimeDirectoryError(
                     f"Directory {runtime_path} contains a different filesystem"
                 )
             entry_stats.append((entry, entry_stat))
@@ -510,7 +521,7 @@ class JenkinsAgentService:
                     follow_symlinks=False,
                 )
         except OSError as exc:
-            raise PackageInstallError(f"Unable to migrate runtime entry {entry}") from exc
+            raise RuntimeDirectoryError(f"Unable to migrate runtime entry {entry}") from exc
 
     def _grant_passwordless_sudo(self, username: str) -> None:
         """Validate and write a passwordless sudo rule for the agent user."""
