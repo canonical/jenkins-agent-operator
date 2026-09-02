@@ -261,6 +261,85 @@ def test_service_configuration_reset_error_blocks_service(
         harness.update_config({"jenkins_home": "/srv/jenkins-agent"})
 
 
+def test_upgrade_automatically_migrates_legacy_runtime(
+    harness_with_agent_relation: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    service_mocks: SimpleNamespace,
+):
+    """
+    Arrange: an upgrade finds unsafe legacy runtime ownership.
+    Act: emit the upgrade hook.
+    Assert: existing runtime trees are migrated before the service starts.
+    """
+    runtime_usable = MagicMock(side_effect=[False, True])
+    migration_mock = service_mocks.migrate_runtime_directories
+    monkeypatch.setattr(service.JenkinsAgentService, "runtime_directories_usable", runtime_usable)
+    harness = harness_with_agent_relation
+    harness.begin()
+
+    harness.charm.on.upgrade_charm.emit()
+
+    migration_mock.assert_called_once_with()
+    service_mocks.restart.assert_called_once_with()
+    assert harness.charm.unit.status.name == ops.ActiveStatus.name
+
+
+def test_upgrade_automatic_migration_failure_blocks_with_action_guidance(
+    harness_with_agent_relation: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    service_mocks: SimpleNamespace,
+):
+    """
+    Arrange: an upgrade finds unsafe runtime ownership and migration fails.
+    Act: emit the upgrade hook.
+    Assert: the charm blocks and points to the ownership action.
+    """
+    monkeypatch.setattr(
+        service.JenkinsAgentService,
+        "runtime_directories_usable",
+        MagicMock(return_value=False),
+    )
+    service_mocks.migrate_runtime_directories.side_effect = service.RuntimeDirectoryError(
+        "legacy tree failed"
+    )
+    harness = harness_with_agent_relation
+    harness.begin()
+
+    harness.charm.on.upgrade_charm.emit()
+
+    assert harness.charm.unit.status.name == ops.BlockedStatus.name
+    assert "migrate-runtime-directory" in harness.charm.unit.status.message
+    assert "legacy tree failed" in harness.charm.unit.status.message
+    service_mocks.restart.assert_not_called()
+
+
+def test_upgrade_automatic_migration_stops_active_service(
+    harness_with_agent_relation: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    service_mocks: SimpleNamespace,
+):
+    """
+    Arrange: an upgrade finds unsafe runtime ownership while the service is active.
+    Act: emit the upgrade hook.
+    Assert: the service stops before migration and starts after the repair.
+    """
+    runtime_usable = MagicMock(side_effect=[False, True])
+    migration_mock = service_mocks.migrate_runtime_directories
+    monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "configuration_changed", MagicMock(return_value=False)
+    )
+    monkeypatch.setattr(service.JenkinsAgentService, "runtime_directories_usable", runtime_usable)
+    harness = harness_with_agent_relation
+    harness.begin()
+
+    harness.charm.on.upgrade_charm.emit()
+
+    service_mocks.reset.assert_called_once_with()
+    migration_mock.assert_called_once_with()
+    service_mocks.restart.assert_called_once_with()
+
+
 def test_reconcile_blocks_until_runtime_ownership_action(
     harness_with_agent_relation: ops.testing.Harness,
     monkeypatch: pytest.MonkeyPatch,

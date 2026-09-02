@@ -31,11 +31,11 @@ class JenkinsAgentCharm(ops.CharmBase):
             self.on.migrate_runtime_directory_action,
             self._on_migrate_runtime_directory_action,
         )
+        self.framework.observe(self.on.upgrade_charm, self._on_upgrade_charm)
         for event in (
             self.on.install,
             self.on.start,
             self.on.config_changed,
-            self.on.upgrade_charm,
             self.on.update_status,
             self.on[AGENT_RELATION].relation_joined,
             self.on[AGENT_RELATION].relation_changed,
@@ -134,7 +134,33 @@ class JenkinsAgentCharm(ops.CharmBase):
             }
         )
 
-    def _reconcile(self, _: ops.EventBase) -> None:
+    def _on_upgrade_charm(self, event: ops.UpgradeCharmEvent) -> None:
+        """Reconcile an upgrade and repair legacy runtime ownership when needed."""
+        self._reconcile(event, automatic_runtime_migration=True)
+
+    def _automatic_runtime_migration(self, agent_service: service.JenkinsAgentService) -> bool:
+        """Repair known legacy runtime directories before an upgraded service starts."""
+        # UpgradeCharmEvent does not expose the previous charm revision. Unsafe
+        # runtime ownership is the observable legacy signature left by revision 265.
+        if agent_service.state.agent_user == "root":
+            return True
+        if agent_service.runtime_directories_usable():
+            return True
+
+        try:
+            if agent_service.is_running:
+                agent_service.reset()
+            agent_service.migrate_runtime_directories()
+        except (service.RuntimeDirectoryError, service.ServiceStopError) as exc:
+            logger.error("Automatic runtime ownership migration failed: %s", exc)
+            self.unit.status = ops.BlockedStatus(
+                f"Automatic runtime ownership migration failed: {exc}. "
+                "Run the migrate-runtime-directory action after fixing the reported path."
+            )
+            return False
+        return True
+
+    def _reconcile(self, _: ops.EventBase, *, automatic_runtime_migration: bool = False) -> None:
         """Reconcile the agent to its desired state on every event.
 
         Raises:
@@ -155,6 +181,8 @@ class JenkinsAgentCharm(ops.CharmBase):
                 raise RuntimeError("Error stopping the agent service") from exc
 
         service_files_changed = self._reconcile_installation(desired_service)
+        if automatic_runtime_migration and not self._automatic_runtime_migration(desired_service):
+            return
         self._reconcile_relation_data(desired_state)
         self._reconcile_service(
             desired_state, desired_service, service_files_changed=service_files_changed

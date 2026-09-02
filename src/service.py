@@ -391,6 +391,18 @@ class JenkinsAgentService:
             ) from exc
 
     # DEPRECATED compatibility action: remove after root-running revisions are no longer supported.
+    def migrate_runtime_directories(self) -> None:
+        """Migrate existing known runtime directories without touching other state."""
+        for name in RUNTIME_DIRECTORIES:
+            path = self.state.jenkins_home / name
+            try:
+                os.lstat(path)
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                raise RuntimeDirectoryError(f"Unable to inspect runtime directory {path}") from exc
+            self.migrate_directory(path)
+
     def migrate_directory(self, directory: Path) -> None:
         """Recursively give a requested Jenkins directory to the service user in place.
 

@@ -55,6 +55,7 @@ def service_mocks_fixture(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         reset_failed_state=MagicMock(),
         credentials_changed=MagicMock(return_value=True),
         runtime_directories_usable=MagicMock(return_value=True),
+        migrate_runtime_directories=MagicMock(),
     )
     monkeypatch.setattr(service.JenkinsAgentService, "is_ready", PropertyMock(return_value=False))
     monkeypatch.setattr(
@@ -71,6 +72,12 @@ def service_mocks_fixture(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     )
     monkeypatch.setattr(
         service.JenkinsAgentService, "runtime_directories_usable", mocks.runtime_directories_usable
+    )
+    monkeypatch.setattr(
+        service.JenkinsAgentService,
+        "migrate_runtime_directories",
+        mocks.migrate_runtime_directories,
+        raising=False,
     )
     return mocks
 
