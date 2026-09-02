@@ -49,7 +49,7 @@ read/write access for files and owner read/write/search access for directories.
 Existing paths and contents are retained, so Jenkins can continue using its
 previous workspaces. The migration does not follow symbolic links or cross-device
 filesystem boundaries. Same-filesystem bind mounts are not distinguished by the
-filesystem check; unmount a mount, or select a directory that does not contain it,
+filesystem check; detach the mount, or select a directory that does not contain it,
 if it must not be changed. A top-level
 symlink, non-directory entry, or nested mount must be handled manually before
 retrying the action.

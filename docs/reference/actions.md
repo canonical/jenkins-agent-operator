@@ -12,7 +12,7 @@ existing directory under that Jenkins home. The action recursively changes
 ownership for that selected tree, preserves its paths and contents, and does not
 create an archive. It does not follow symbolic links or cross-device filesystem
 boundaries. The filesystem check does not distinguish bind mounts on the same
-filesystem; unmount it, or select a directory that does not contain it, if the
+filesystem; detach it, or select a directory that does not contain it, if the
 mount must not be changed before running the action.
 
 Run it after an upgrade from a root-running revision when the charm blocks on
