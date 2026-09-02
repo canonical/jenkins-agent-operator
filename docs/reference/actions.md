@@ -14,14 +14,16 @@ create an archive. It does not follow symbolic links or cross-filesystem
 boundaries.
 
 Run it after an upgrade from a root-running revision when the charm blocks on
-legacy runtime ownership. The action refuses to run while `jenkins-agent` is active,
-so stop the service first and restart it after the action succeeds:
+legacy runtime ownership:
 
 ```bash
-juju ssh jenkins-agent/0 -- sudo systemctl stop jenkins-agent
 juju run --wait=5m jenkins-agent/0 migrate-runtime-directory
-juju ssh jenkins-agent/0 -- sudo systemctl start jenkins-agent
 ```
+
+If `jenkins-agent` is active, the action stops it before migration and restarts it
+after a successful migration. If the service is already stopped, the action leaves
+it stopped. In either case, run the action when no Jenkins job is modifying the
+selected tree.
 
 To migrate only a subdirectory, pass `directory` explicitly:
 
@@ -30,8 +32,9 @@ juju run --wait=5m jenkins-agent/0 migrate-runtime-directory \
   directory=/var/lib/jenkins/workspace
 ```
 
-This maintenance-window requirement prevents the action from racing an active
-Jenkins job.
+The action fails if stopping or restarting the service fails. A migration failure
+leaves a previously running service stopped so the tree can be repaired and retried
+safely.
 
 > **Deprecation notice:** This action is a temporary compatibility path for
 > root-running revisions such as revision 265. It may be removed in a future

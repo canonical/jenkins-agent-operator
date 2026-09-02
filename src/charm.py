@@ -79,14 +79,32 @@ class JenkinsAgentCharm(ops.CharmBase):
 
     def _on_migrate_runtime_directory_action(self, event: ops.ActionEvent) -> None:
         """Migrate an operator-selected Jenkins directory to the service user."""
+        service_restarted = False
         try:
             state = State.from_charm(self)
             directory = self._action_directory(state, event)
             agent_service = service.JenkinsAgentService(state)
-            if agent_service.is_running:
-                event.fail("Stop jenkins-agent before migrating directory ownership")
-                return
-            agent_service.migrate_directory(directory)
+            was_running = agent_service.is_running
+            if was_running:
+                try:
+                    agent_service.reset()
+                except service.ServiceStopError as exc:
+                    raise RuntimeError("Error stopping the agent service") from exc
+            try:
+                agent_service.migrate_directory(directory)
+            except service.PackageInstallError:
+                # Leave a previously running service stopped when migration fails.
+                raise
+            if was_running:
+                try:
+                    agent_service.restart()
+                except service.ServiceRestartError as exc:
+                    try:
+                        agent_service.reset()
+                    except service.ServiceStopError:
+                        logger.exception("Failed to leave the agent service stopped")
+                    raise RuntimeError("Error restarting the agent service") from exc
+                service_restarted = True
         except (InvalidStateError, RuntimeError, ValueError, service.PackageInstallError) as exc:
             event.fail(str(exc))
             return
@@ -94,6 +112,7 @@ class JenkinsAgentCharm(ops.CharmBase):
             {
                 "directory": str(directory),
                 "user": state.agent_user,
+                "service-restarted": service_restarted,
                 "message": "Directory ownership migrated in place",
             }
         )

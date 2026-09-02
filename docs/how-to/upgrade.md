@@ -27,10 +27,12 @@ charm detects legacy ownership, it leaves the service stopped and blocked until 
 ownership migration action is run:
 
 ```bash
-juju ssh jenkins-agent/0 -- sudo systemctl stop jenkins-agent
 juju run --wait=5m jenkins-agent/0 migrate-runtime-directory
-juju ssh jenkins-agent/0 -- sudo systemctl start jenkins-agent
 ```
+
+If the service is already stopped because reconciliation blocked it, start the
+service after the action succeeds. If it was active when the action started, the
+action stops it before migration and restarts it after a successful migration.
 
 The action defaults to the configured `jenkins_home` and can target a smaller
 subdirectory, for example:

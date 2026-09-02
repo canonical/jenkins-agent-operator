@@ -483,8 +483,8 @@ def test_agent_upgrades_from_revision_265(
     assert second_number != first_number
     assert "Permission denied" in second_console
 
-    # Run the explicit ownership action against the configured Jenkins home.
-    juju.cli("ssh", unit_name, "sudo", "systemctl", "stop", "jenkins-agent")
+    # Run the explicit ownership action against the configured Jenkins home. It
+    # stops the active service before migration and restores it afterward.
     action_output = juju.cli(
         "run",
         "--format=json",
@@ -497,6 +497,8 @@ def test_agent_upgrades_from_revision_265(
     assert action["results"]["directory"] == LEGACY_AGENT_HOME
     assert action["results"]["user"] == "jenkins"
     assert action["results"]["return-code"] == 0
+    assert action["results"]["service-restarted"] in (True, "true")
+    assert _service_is_active(juju, unit_name)
 
     migrated = _stat_entries(juju, unit_name, runtime_paths)
     assert all(migrated[path][0:2] == (jenkins_uid, jenkins_gid) for path in runtime_paths)
@@ -506,8 +508,6 @@ def test_agent_upgrades_from_revision_265(
         with pytest.raises(CLIError):
             juju.cli("ssh", unit_name, "sudo", "test", "-e", f"{LEGACY_AGENT_HOME}/{archive_name}")
 
-    juju.cli("ssh", unit_name, "sudo", "systemctl", "reset-failed", "jenkins-agent")
-    juju.cli("ssh", unit_name, "sudo", "systemctl", "start", "jenkins-agent")
     assert _wait_for_agent_online(jenkins_client, agent_name), (
         f"Agent {agent_name} did not reconnect after ownership migration"
     )

@@ -308,6 +308,7 @@ def test_migrate_runtime_directory_action_defaults_to_configured_home(
     migration_mock.assert_called_once_with(home)
     assert output.results["directory"] == str(home)
     assert output.results["user"] == "jenkins"
+    assert output.results["service-restarted"] is False
 
 
 def test_migrate_runtime_directory_action_uses_requested_subdirectory(
@@ -334,6 +335,7 @@ def test_migrate_runtime_directory_action_uses_requested_subdirectory(
     migration_mock.assert_called_once_with(workspace)
     assert output.results["directory"] == str(workspace)
     assert output.results["user"] == "jenkins"
+    assert output.results["service-restarted"] is False
 
 
 @pytest.mark.parametrize("directory", ["relative/path", "../etc", "/", "/etc"])
@@ -358,26 +360,34 @@ def test_migrate_runtime_directory_action_rejects_unsafe_path(
     migration_mock.assert_not_called()
 
 
-def test_migrate_runtime_directory_action_refuses_running_service(
+def test_migrate_runtime_directory_action_restarts_running_service(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     """
     Arrange: the agent service is running and the target home exists.
     Act: run the ownership-migration action.
-    Assert: the action fails without changing the directory.
+    Assert: the service is stopped before migration and restarted afterward.
     """
     migration_mock = MagicMock()
+    reset_mock = MagicMock()
+    restart_mock = MagicMock()
     monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
+    monkeypatch.setattr(service.JenkinsAgentService, "reset", reset_mock)
+    monkeypatch.setattr(service.JenkinsAgentService, "restart", restart_mock)
     monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
     home = tmp_path / "jenkins-home"
     home.mkdir()
     harness.update_config({"jenkins_home": str(home)})
     harness.begin()
 
-    with pytest.raises(ops.testing.ActionFailed, match="Stop jenkins-agent before"):
-        harness.run_action("migrate-runtime-directory")
+    output = harness.run_action("migrate-runtime-directory")
 
-    migration_mock.assert_not_called()
+    migration_mock.assert_called_once_with(home)
+    reset_mock.assert_called_once_with()
+    restart_mock.assert_called_once_with()
+    assert output.results["directory"] == str(home)
+    assert output.results["user"] == "jenkins"
+    assert output.results["service-restarted"] is True
 
 
 def test_migrate_runtime_directory_action_rejects_symlink_parent(
@@ -525,3 +535,82 @@ def test_migrate_runtime_directory_action_rejects_resolved_path_outside_home(
         harness.run_action("migrate-runtime-directory", {"directory": str(workspace)})
 
     migration_mock.assert_not_called()
+
+
+def test_migrate_runtime_directory_action_leaves_service_stopped_on_migration_error(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """
+    Arrange: the running service stops successfully but migration fails.
+    Act: run the ownership-migration action.
+    Assert: the service is not restarted and the action reports the migration error.
+    """
+    reset_mock = MagicMock()
+    migration_mock = MagicMock(side_effect=service.PackageInstallError("migration failed"))
+    restart_mock = MagicMock()
+    monkeypatch.setattr(service.JenkinsAgentService, "reset", reset_mock)
+    monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
+    monkeypatch.setattr(service.JenkinsAgentService, "restart", restart_mock)
+    monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    harness.update_config({"jenkins_home": str(home)})
+    harness.begin()
+
+    with pytest.raises(ops.testing.ActionFailed, match="migration failed"):
+        harness.run_action("migrate-runtime-directory")
+
+    reset_mock.assert_called_once_with()
+    restart_mock.assert_not_called()
+
+
+def test_migrate_runtime_directory_action_reports_stop_error(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """
+    Arrange: the running service cannot be stopped.
+    Act: run the ownership-migration action.
+    Assert: migration is not attempted and the stop error is reported.
+    """
+    reset_mock = MagicMock(side_effect=service.ServiceStopError("stop failed"))
+    migration_mock = MagicMock()
+    monkeypatch.setattr(service.JenkinsAgentService, "reset", reset_mock)
+    monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
+    monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    harness.update_config({"jenkins_home": str(home)})
+    harness.begin()
+
+    with pytest.raises(ops.testing.ActionFailed, match="Error stopping the agent service"):
+        harness.run_action("migrate-runtime-directory")
+
+    migration_mock.assert_not_called()
+
+
+def test_migrate_runtime_directory_action_reports_restart_error(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """
+    Arrange: migration succeeds but the original service cannot restart.
+    Act: run the ownership-migration action.
+    Assert: the action reports the restart error and attempts to stop again.
+    """
+    reset_mock = MagicMock()
+    migration_mock = MagicMock()
+    restart_mock = MagicMock(side_effect=service.ServiceRestartError("restart failed"))
+    monkeypatch.setattr(service.JenkinsAgentService, "reset", reset_mock)
+    monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
+    monkeypatch.setattr(service.JenkinsAgentService, "restart", restart_mock)
+    monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    harness.update_config({"jenkins_home": str(home)})
+    harness.begin()
+
+    with pytest.raises(ops.testing.ActionFailed, match="Error restarting the agent service"):
+        harness.run_action("migrate-runtime-directory")
+
+    assert reset_mock.call_count == 2
+    migration_mock.assert_called_once_with(home)
+    restart_mock.assert_called_once_with()
