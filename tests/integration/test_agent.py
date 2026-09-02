@@ -235,10 +235,12 @@ def test_service_process_user_retries_when_main_pid_exits():
     class Juju:
         def __init__(self):
             self.process_lookup_count = 0
+            self.process_commands = []
 
         def cli(self, *args):
-            if args[3] == "systemctl":
+            if "systemctl" in args:
                 return "100\n"
+            self.process_commands.append(args)
             self.process_lookup_count += 1
             if self.process_lookup_count == 1:
                 raise CLIError(1, list(args), "", "process exited")
@@ -251,6 +253,7 @@ def test_service_process_user_retries_when_main_pid_exits():
 
     assert user == "jenkins"
     assert juju.process_lookup_count == 2
+    assert all(command[2] == "--" for command in juju.process_commands)
 
 
 def _run_job(*, job: jenkinsapi.job.Job, expected_status: str = "SUCCESS") -> tuple[int, str]:
@@ -288,7 +291,7 @@ def _service_process_user(juju: jubilant.Juju, unit_name: str) -> str:
     ).strip()
     if not pid or pid == "0":
         raise ValueError("jenkins-agent has no main process")
-    user = juju.cli("ssh", unit_name, "sudo", "ps", "-o", "user=", "-p", pid).strip()
+    user = juju.cli("ssh", unit_name, "--", "sudo", "ps", "-o", "user=", "-p", pid).strip()
     if not user:
         raise ValueError(f"jenkins-agent process {pid} has no OS user")
     return user
