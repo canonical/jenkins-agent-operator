@@ -932,6 +932,34 @@ def test_runtime_directories_usable_accepts_missing_entries(tmp_path: Path):
     assert _runtime_service(home).runtime_directories_usable()
 
 
+def test_runtime_directories_usable_rejects_wrong_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """
+    Arrange: a runtime directory has the service UID but a different GID.
+    Act: check runtime-directory usability.
+    Assert: reconciliation blocks until ownership migration repairs the group.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    remoting = home / "remoting"
+    remoting.mkdir(mode=0o750)
+    service_instance = _runtime_service(home)
+    user_info = service_instance._agent_user_info()
+    monkeypatch.setattr(
+        service_instance,
+        "_agent_user_info",
+        MagicMock(
+            return_value=SimpleNamespace(
+                pw_uid=user_info.pw_uid,
+                pw_gid=user_info.pw_gid + 1,
+            ),
+        ),
+    )
+
+    assert not service_instance.runtime_directories_usable()
+
+
 def test_runtime_directories_usable_rejects_inaccessible_entry(tmp_path: Path):
     """
     Arrange: a runtime directory lacks owner write and search access.

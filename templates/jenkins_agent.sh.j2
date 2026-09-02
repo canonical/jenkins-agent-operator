@@ -95,7 +95,6 @@ write_ready_marker() {
     trap - EXIT
 }
 
-# Specify the agent as ready
 prepare_runtime_directory() {
     local name="$1"
     local runtime_path="${JENKINS_HOME}/${name}"
@@ -107,15 +106,24 @@ prepare_runtime_directory() {
         fi
         return 0
     fi
+    # Keep this predicate in sync with JenkinsAgentService.runtime_directories_usable.
     # Existing legacy trees are migrated by the operator action before systemd
-    # drops privileges. Keep this guard so an incomplete migration fails closed.
-    if [ ! -L "$runtime_path" ] && [ -d "$runtime_path" ] && \
-       [ -O "$runtime_path" ] && [ -r "$runtime_path" ] && \
-       [ -w "$runtime_path" ] && [ -x "$runtime_path" ]; then
-        return 0
+    # drops privileges, so an incomplete migration fails closed here too.
+    if [ -L "$runtime_path" ]; then
+        err "${name} directory is a symbolic link; replace manually before retrying"
+        return 1
     fi
-    err "Unable to use ${name} directory; legacy runtime migration did not complete"
-    return 1
+    if [ ! -d "$runtime_path" ]; then
+        err "${name} directory is not a directory; replace manually before retrying"
+        return 1
+    fi
+    if [ ! -O "$runtime_path" ] || [ ! -G "$runtime_path" ] || \
+       [ ! -r "$runtime_path" ] || [ ! -w "$runtime_path" ] || \
+       [ ! -x "$runtime_path" ]; then
+        err "${name} directory lacks owner access or group ownership; run migrate-runtime-directory"
+        return 1
+    fi
+    return 0
 }
 
 if ! prepare_runtime_directory remoting; then

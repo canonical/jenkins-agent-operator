@@ -110,8 +110,8 @@ class JenkinsAgentService:
 
         Missing directories are valid because the unprivileged launcher creates them.
         Existing directories must be real directories owned by the configured user and
-        have owner read/write/search access. This is a top-level preflight only; the
-        ownership action performs a recursive migration when needed.
+        its primary group, and have owner read/write/search access. This is a top-level
+        preflight only; the ownership action performs a recursive migration when needed.
         """
         try:
             user_info = self._agent_user_info()
@@ -119,6 +119,9 @@ class JenkinsAgentService:
             return False
 
         owner_bits = stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR
+        # Keep this predicate in sync with prepare_runtime_directory in the launcher.
+        # Bash access checks can differ for root because CAP_DAC_OVERRIDE bypasses
+        # mode bits; this check intentionally enforces owner bits strictly.
         for name in RUNTIME_DIRECTORIES:
             path = self.state.jenkins_home / name
             try:

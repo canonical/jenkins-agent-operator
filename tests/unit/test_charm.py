@@ -281,7 +281,9 @@ def test_reconcile_blocks_until_runtime_ownership_action(
     harness.charm.on.update_status.emit()
 
     assert harness.charm.unit.status.name == ops.BlockedStatus.name
-    assert "migrate-runtime-directory" in harness.charm.unit.status.message
+    assert harness.charm.unit.status.message == (
+        "Run the migrate-runtime-directory action to repair legacy runtime ownership."
+    )
     service_mocks.restart.assert_not_called()
 
 
@@ -309,6 +311,10 @@ def test_migrate_runtime_directory_action_defaults_to_configured_home(
     assert output.results["directory"] == str(home)
     assert output.results["user"] == "jenkins"
     assert output.results["service-restarted"] is False
+    assert output.results["message"] == (
+        "Directory ownership migrated in place; service remains stopped and will start "
+        "on the next reconciliation when prerequisites are ready"
+    )
 
 
 def test_migrate_runtime_directory_action_uses_requested_subdirectory(
@@ -338,9 +344,20 @@ def test_migrate_runtime_directory_action_uses_requested_subdirectory(
     assert output.results["service-restarted"] is False
 
 
-@pytest.mark.parametrize("directory", ["relative/path", "../etc", "/", "/etc"])
+@pytest.mark.parametrize(
+    ("directory", "error"),
+    [
+        ("relative/path", "absolute path"),
+        ("../etc", "must not contain '..'"),
+        ("/", "must not be the filesystem root"),
+        ("/etc", "under the configured Jenkins home"),
+    ],
+)
 def test_migrate_runtime_directory_action_rejects_unsafe_path(
-    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, directory: str
+    harness: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    directory: str,
+    error: str,
 ):
     """
     Arrange: a charm with the default Jenkins home.
@@ -354,7 +371,7 @@ def test_migrate_runtime_directory_action_rejects_unsafe_path(
     )
     harness.begin()
 
-    with pytest.raises(ops.testing.ActionFailed, match="under the configured Jenkins home"):
+    with pytest.raises(ops.testing.ActionFailed, match=error):
         harness.run_action("migrate-runtime-directory", {"directory": directory})
 
     migration_mock.assert_not_called()

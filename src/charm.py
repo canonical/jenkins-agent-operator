@@ -59,10 +59,12 @@ class JenkinsAgentCharm(ops.CharmBase):
         requested = str(event.params.get("directory") or state.jenkins_home)
         directory = Path(requested)
         home = state.jenkins_home
-        if not directory.is_absolute() or directory == Path("/") or ".." in directory.parts:
-            raise ValueError(
-                "directory must be an absolute path under the configured Jenkins home"
-            )
+        if ".." in directory.parts:
+            raise ValueError("directory must not contain '..'")
+        if not directory.is_absolute():
+            raise ValueError("directory must be an absolute path")
+        if directory == Path("/"):
+            raise ValueError("directory must not be the filesystem root")
         if self._path_contains_symlink(home) or self._path_contains_symlink(directory):
             raise ValueError(f"directory {directory} contains a symbolic link")
 
@@ -108,12 +110,18 @@ class JenkinsAgentCharm(ops.CharmBase):
         except (InvalidStateError, RuntimeError, ValueError, service.PackageInstallError) as exc:
             event.fail(str(exc))
             return
+        message = "Directory ownership migrated in place"
+        if not service_restarted:
+            message += (
+                "; service remains stopped and will start on the next reconciliation "
+                "when prerequisites are ready"
+            )
         event.set_results(
             {
                 "directory": str(directory),
                 "user": state.agent_user,
                 "service-restarted": service_restarted,
-                "message": "Directory ownership migrated in place",
+                "message": message,
             }
         )
 
@@ -212,7 +220,7 @@ class JenkinsAgentCharm(ops.CharmBase):
 
         if not agent_service.runtime_directories_usable():
             self.unit.status = ops.BlockedStatus(
-                "Run migrate-runtime-directory after stopping jenkins-agent."
+                "Run the migrate-runtime-directory action to repair legacy runtime ownership."
             )
             return
 

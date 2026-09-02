@@ -296,8 +296,74 @@ def test_launcher_rejects_unmigrated_runtime_directory(tmp_path: Path):
     run = _run_launcher(tmp_path, home, require_runtime_directories=True)
 
     assert run.result.returncode == 1
-    assert "legacy runtime migration did not complete" in run.result.stderr
+    assert (
+        "workspace directory lacks owner access or group ownership; run migrate-runtime-directory"
+        in run.result.stderr
+    )
     assert workspace.is_dir()
+    assert not run.java_called.exists()
+
+
+def test_launcher_rejects_runtime_directory_with_wrong_group(tmp_path: Path):
+    """
+    Arrange: runtime directories have owner access but a different group ID.
+    Act: run the launcher with a mismatched runtime group.
+    Assert: startup fails closed before Java starts.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    remoting = home / "remoting"
+    remoting.mkdir(mode=0o750)
+    (home / "workspace").mkdir(mode=0o750)
+    wrong_group = next((gid for gid in os.getgroups() if gid != os.getgid()), None)
+    if wrong_group is None:
+        pytest.skip("the test user has no supplementary group for a mismatch")
+    os.chown(remoting, os.getuid(), wrong_group)
+
+    run = _run_launcher(tmp_path, home, require_runtime_directories=True)
+
+    assert run.result.returncode == 1
+    assert "remoting directory lacks owner access or group ownership" in run.result.stderr
+    assert not run.java_called.exists()
+
+
+def test_launcher_reports_runtime_symlink_requires_manual_replacement(tmp_path: Path):
+    """
+    Arrange: a runtime entry is a symbolic link.
+    Act: run the launcher.
+    Assert: startup fails with a manual-recovery diagnostic.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (home / "remoting").symlink_to(outside, target_is_directory=True)
+    (home / "workspace").mkdir(mode=0o750)
+
+    run = _run_launcher(tmp_path, home, require_runtime_directories=True)
+
+    assert run.result.returncode == 1
+    assert "remoting directory is a symbolic link; replace manually" in run.result.stderr
+    assert not run.java_called.exists()
+
+
+def test_launcher_reports_non_directory_runtime_entry_requires_manual_replacement(
+    tmp_path: Path,
+):
+    """
+    Arrange: a runtime entry is not a directory.
+    Act: run the launcher.
+    Assert: startup fails with a manual-recovery diagnostic.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    (home / "remoting").write_text("stale")
+    (home / "workspace").mkdir(mode=0o750)
+
+    run = _run_launcher(tmp_path, home, require_runtime_directories=True)
+
+    assert run.result.returncode == 1
+    assert "remoting directory is not a directory; replace manually" in run.result.stderr
     assert not run.java_called.exists()
 
 
