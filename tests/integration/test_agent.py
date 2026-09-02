@@ -107,18 +107,13 @@ def active_agent_fixture(
     _configure_agent_remote_fs(jenkins_client, nodes[0].name)
     # Jenkins applies a node's remoteFS when the inbound agent reconnects.
     unit_name = _unit_name(juju, jenkins_agent_application)
-    juju.cli(
-        "ssh",
-        unit_name,
-        "sudo",
-        "systemctl",
-        "restart",
-        "jenkins-agent",
+    _restart_agent_and_wait(
+        jenkins_client=jenkins_client,
+        juju=juju,
+        unit_name=unit_name,
+        agent_name=nodes[0].name,
     )
     juju.wait(jubilant.all_active, timeout=60 * 15)
-    assert _wait_for_agent_online(jenkins_client, nodes[0].name), (
-        f"Agent {nodes[0].name} did not reconnect after updating remoteFS"
-    )
     return jenkins_agent_application
 
 
@@ -273,6 +268,23 @@ def _unit_name(juju: jubilant.Juju, application: str) -> str:
     units = juju.status().get_units(application)
     assert len(units) == 1, f"Expected one unit for {application}, found {list(units)}"
     return next(iter(units))
+
+
+def _restart_agent_and_wait(
+    jenkins_client: jenkinsapi.jenkins.Jenkins,
+    juju: jubilant.Juju,
+    unit_name: str,
+    agent_name: str,
+) -> None:
+    """Stop and start the agent while observing its Jenkins offline/online transition."""
+    juju.cli("ssh", unit_name, "--", "sudo", "systemctl", "stop", "jenkins-agent")
+    assert _wait_for_agent_online(jenkins_client, agent_name, online=False), (
+        f"Agent {agent_name} did not go offline before restart"
+    )
+    juju.cli("ssh", unit_name, "--", "sudo", "systemctl", "start", "jenkins-agent")
+    assert _wait_for_agent_online(jenkins_client, agent_name), (
+        f"Agent {agent_name} did not come online after restart"
+    )
 
 
 _SERVICE_USER_RETRY_ERRORS = (CLIError, ValueError)
@@ -461,9 +473,11 @@ def test_agent_upgrades_from_revision_265(
         jenkins_client, agent_name, remote_fs=LEGACY_AGENT_HOME
     )
     assert legacy_node.get_config_element("remoteFS") == LEGACY_AGENT_HOME
-    juju.cli("ssh", unit_name, "sudo", "systemctl", "restart", "jenkins-agent")
-    assert _wait_for_agent_online(jenkins_client, agent_name), (
-        f"Legacy agent {agent_name} did not reconnect after setting remoteFS"
+    _restart_agent_and_wait(
+        jenkins_client=jenkins_client,
+        juju=juju,
+        unit_name=unit_name,
+        agent_name=agent_name,
     )
     assert _service_process_user(juju, unit_name) == "root"
 
@@ -612,9 +626,11 @@ def test_agent_upgrades_from_revision_265(
     assert juju.cli("ssh", unit_name, "sudo", "cat", proof_path).strip() == "workspace-updated"
 
     # A later restart must retain the same migrated workspace and its contents.
-    juju.cli("ssh", unit_name, "sudo", "systemctl", "restart", "jenkins-agent")
-    assert _wait_for_agent_online(jenkins_client, agent_name), (
-        f"Agent {agent_name} did not reconnect after a second restart"
+    _restart_agent_and_wait(
+        jenkins_client=jenkins_client,
+        juju=juju,
+        unit_name=unit_name,
+        agent_name=agent_name,
     )
     final_paths = _stat_entries(juju, unit_name, [proof_path])
     assert final_paths[proof_path][3] == before_inodes[proof_path]
