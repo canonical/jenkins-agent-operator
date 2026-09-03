@@ -275,16 +275,18 @@ def _restart_agent_and_wait(
     juju: jubilant.Juju,
     unit_name: str,
     agent_name: str,
-) -> None:
-    """Stop and start the agent while observing its Jenkins offline/online transition."""
+) -> str:
+    """Restart the agent and return its process user after it is running."""
     juju.cli("ssh", unit_name, "--", "sudo", "systemctl", "stop", "jenkins-agent")
     assert _wait_for_agent_online(jenkins_client, agent_name, online=False), (
         f"Agent {agent_name} did not go offline before restart"
     )
     juju.cli("ssh", unit_name, "--", "sudo", "systemctl", "start", "jenkins-agent")
+    process_user = _service_process_user(juju, unit_name)
     assert _wait_for_agent_online(jenkins_client, agent_name), (
         f"Agent {agent_name} did not come online after restart"
     )
+    return process_user
 
 
 _SERVICE_USER_RETRY_ERRORS = (CLIError, ValueError)
@@ -473,13 +475,13 @@ def test_agent_upgrades_from_revision_265(
         jenkins_client, agent_name, remote_fs=LEGACY_AGENT_HOME
     )
     assert legacy_node.get_config_element("remoteFS") == LEGACY_AGENT_HOME
-    _restart_agent_and_wait(
+    legacy_process_user = _restart_agent_and_wait(
         jenkins_client=jenkins_client,
         juju=juju,
         unit_name=unit_name,
         agent_name=agent_name,
     )
-    assert _service_process_user(juju, unit_name) == "root"
+    assert legacy_process_user == "root"
 
     job_name = f"{agent_name}-rev265-upgrade"
     job = jenkins_client.create_job(
