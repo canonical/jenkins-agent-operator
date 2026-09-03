@@ -2,53 +2,42 @@
 
 ## `migrate-runtime-directory`
 
-Migrate ownership and owner permissions for an existing directory in place. The
-action uses the configured `agent_user` as the target user; it does not use the
-action process user, which normally runs as `root`.
+Migrate an existing Jenkins directory tree in place to the configured
+`agent_user` and group. The action process normally runs as `root`, but that
+account is not used as the target owner.
 
-If `directory` is omitted or empty, the action migrates the configured
-`jenkins_home` (default: `/var/lib/jenkins`). A specified directory must be an
-existing directory under that Jenkins home. The action recursively changes
-ownership for that selected tree, preserves its paths and contents, and does not
-create an archive. It does not follow symbolic links or cross-device filesystem
-boundaries. The filesystem check does not distinguish bind mounts on the same
-filesystem; detach it, or select a directory that does not contain it, if the
-mount must not be changed before running the action.
+If `directory` is omitted, the action uses the configured `jenkins_home`
+(default: `/var/lib/jenkins`). A specified path must be an existing directory
+under that home.
 
-Run it after an upgrade from a root-running revision when the charm blocks on
-legacy runtime ownership:
+The action preserves paths and contents. It creates no archive, does not follow
+symlinks, and does not cross filesystem boundaries. Same-filesystem bind mounts
+are not detected; detach them or exclude them from the selected path first.
+
+Run it when the charm blocks on legacy runtime ownership:
 
 ```bash
 juju run --wait=5m jenkins-agent/0 migrate-runtime-directory
 ```
 
-If `jenkins-agent` is active, the action stops it before migration and restarts it
-after a successful migration. If the service is already stopped, the action leaves
-it stopped; the charm starts it on the next reconciliation when its prerequisites
-are ready. In either case, run the action when no Jenkins job is modifying the
+A successful migration starts the service, whether it was running or stopped
+when the action began. The action stops an active service before migration. If
+stopping or restarting fails, the action reports the error and leaves the
+service stopped where possible. Do not run it while a Jenkins job modifies the
 selected tree.
 
-To migrate only a subdirectory, pass `directory` explicitly:
+To migrate one subtree:
 
 ```bash
 juju run --wait=5m jenkins-agent/0 migrate-runtime-directory \
   directory=/var/lib/jenkins/workspace
 ```
 
-The charm's startup gate checks both top-level `remoting` and `workspace`.
-Migrating only one subdirectory will not unblock the unit if the other tree still
-has unsafe ownership or access. Migrate both trees (or the complete Jenkins home)
-when both are affected.
-
-The walk is O(n) in the number of entries and the action has no server-side
-timeout. `--wait` is only the Juju client wait; choose a value large enough for
-large workspaces. The action fails if stopping or restarting the service fails. A
-migration failure leaves a previously running service stopped so the tree can be
-repaired and retried safely.
+The startup gate checks both `remoting` and `workspace`; repair both if needed.
+`--wait` is the Juju client timeout, so increase it for large trees.
 
 > **Deprecation notice:** This action is a temporary compatibility path for
-> root-running revisions such as revision 265. It may be removed in a future
-> release after those revisions are no longer supported.
+> root-running revisions such as revision 265.
 
 See [Actions](https://charmhub.io/jenkins-agent/actions).
 

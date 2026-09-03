@@ -293,10 +293,13 @@ def test_migrate_runtime_directory_action_defaults_to_configured_home(
     """
     Arrange: a charm with the default agent user and Jenkins home.
     Act: run the ownership-migration action without a directory parameter.
-    Assert: the configured service user and default Jenkins home are passed to the service.
+    Assert: the configured service user and default Jenkins home are passed to the service,
+    and the service resumes after migration.
     """
     migration_mock = MagicMock()
+    restart_mock = MagicMock()
     monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
+    monkeypatch.setattr(service.JenkinsAgentService, "restart", restart_mock)
     monkeypatch.setattr(
         service.JenkinsAgentService, "is_running", PropertyMock(return_value=False)
     )
@@ -310,11 +313,9 @@ def test_migrate_runtime_directory_action_defaults_to_configured_home(
     migration_mock.assert_called_once_with(home)
     assert output.results["directory"] == str(home)
     assert output.results["user"] == "jenkins"
-    assert output.results["service-restarted"] is False
-    assert output.results["message"] == (
-        "Directory ownership migrated in place; service remains stopped and will start "
-        "on the next reconciliation when prerequisites are ready"
-    )
+    assert output.results["service-restarted"] is True
+    assert output.results["message"] == "Directory ownership migrated in place"
+    restart_mock.assert_called_once_with()
 
 
 def test_migrate_runtime_directory_action_uses_requested_subdirectory(
@@ -323,10 +324,12 @@ def test_migrate_runtime_directory_action_uses_requested_subdirectory(
     """
     Arrange: a charm configured with a Jenkins home.
     Act: run the action with a directory under that home.
-    Assert: the requested directory is passed to the ownership migration.
+    Assert: the requested directory is passed to the ownership migration and the service resumes.
     """
     migration_mock = MagicMock()
+    restart_mock = MagicMock()
     monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
+    monkeypatch.setattr(service.JenkinsAgentService, "restart", restart_mock)
     monkeypatch.setattr(
         service.JenkinsAgentService, "is_running", PropertyMock(return_value=False)
     )
@@ -341,7 +344,8 @@ def test_migrate_runtime_directory_action_uses_requested_subdirectory(
     migration_mock.assert_called_once_with(workspace)
     assert output.results["directory"] == str(workspace)
     assert output.results["user"] == "jenkins"
-    assert output.results["service-restarted"] is False
+    assert output.results["service-restarted"] is True
+    restart_mock.assert_called_once_with()
 
 
 @pytest.mark.parametrize(
