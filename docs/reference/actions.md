@@ -20,11 +20,12 @@ Run it when the charm blocks on legacy runtime ownership:
 juju run --wait=5m jenkins-agent/0 migrate-runtime-directory
 ```
 
-A successful migration starts the service, whether it was running or stopped
-when the action began. The action stops an active service before migration. If
-stopping or restarting fails, the action reports the error and leaves the
-service stopped where possible. Do not run it while a Jenkins job modifies the
-selected tree.
+When relation credentials are ready, a successful migration starts the service,
+whether it was running or stopped when the action began. The action stops an
+active service before migration. Without credentials, it completes the migration
+and starts the service on the next reconciliation. If stopping or restarting
+fails, it reports the error and leaves the service stopped where possible. Do not
+run it while a Jenkins job modifies the selected tree.
 
 To migrate one subdirectory:
 

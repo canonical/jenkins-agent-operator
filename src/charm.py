@@ -97,17 +97,18 @@ class JenkinsAgentCharm(ops.CharmBase):
             except service.RuntimeDirectoryError:
                 # Leave a previously running service stopped when migration fails.
                 raise
-            # A successful repair resumes the desired service state, including
-            # services that were already stopped when the action began.
-            try:
-                agent_service.restart()
-            except service.ServiceRestartError as exc:
+            if state.agent_relation_credentials:
+                # A successful repair resumes the desired service state, including
+                # services that were already stopped when the action began.
                 try:
-                    agent_service.reset()
-                except service.ServiceStopError:
-                    logger.exception("Failed to leave the agent service stopped")
-                raise RuntimeError("Error restarting the agent service") from exc
-            service_restarted = True
+                    agent_service.restart()
+                except service.ServiceRestartError as exc:
+                    try:
+                        agent_service.reset()
+                    except service.ServiceStopError:
+                        logger.exception("Failed to leave the agent service stopped")
+                    raise RuntimeError("Error restarting the agent service") from exc
+                service_restarted = True
         except (InvalidStateError, RuntimeError, ValueError, service.RuntimeDirectoryError) as exc:
             event.fail(str(exc))
             return

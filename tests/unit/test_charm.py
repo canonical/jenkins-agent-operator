@@ -287,14 +287,13 @@ def test_reconcile_blocks_until_runtime_ownership_action(
     service_mocks.restart.assert_not_called()
 
 
-def test_migrate_runtime_directory_action_defaults_to_configured_home(
+def test_migrate_runtime_directory_action_waits_for_relation_credentials(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     """
-    Arrange: a charm with the default agent user and Jenkins home.
-    Act: run the ownership-migration action without a directory parameter.
-    Assert: the configured service user and default Jenkins home are passed to the service,
-    and the service resumes after migration.
+    Arrange: migration succeeds but relation credentials are not available.
+    Act: run the ownership-migration action.
+    Assert: migration succeeds and the service waits for the next reconciliation.
     """
     migration_mock = MagicMock()
     restart_mock = MagicMock()
@@ -311,6 +310,40 @@ def test_migrate_runtime_directory_action_defaults_to_configured_home(
     output = harness.run_action("migrate-runtime-directory")
 
     migration_mock.assert_called_once_with(home)
+    restart_mock.assert_not_called()
+    assert output.results["service-restarted"] is False
+    assert output.results["message"] == (
+        "Directory ownership migrated in place; service remains stopped and will start on the "
+        "next reconciliation when prerequisites are ready"
+    )
+
+
+def test_migrate_runtime_directory_action_defaults_to_configured_home(
+    harness_with_agent_relation: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    """
+    Arrange: a charm with the default agent user and Jenkins home.
+    Act: run the ownership-migration action without a directory parameter.
+    Assert: the configured service user and default Jenkins home are passed to the service,
+    and the service resumes after migration.
+    """
+    migration_mock = MagicMock()
+    restart_mock = MagicMock()
+    monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
+    monkeypatch.setattr(service.JenkinsAgentService, "restart", restart_mock)
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "is_running", PropertyMock(return_value=False)
+    )
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    harness_with_agent_relation.update_config({"jenkins_home": str(home)})
+    harness_with_agent_relation.begin()
+
+    output = harness_with_agent_relation.run_action("migrate-runtime-directory")
+
+    migration_mock.assert_called_once_with(home)
     assert output.results["directory"] == str(home)
     assert output.results["user"] == "jenkins"
     assert output.results["service-restarted"] is True
@@ -319,7 +352,9 @@ def test_migrate_runtime_directory_action_defaults_to_configured_home(
 
 
 def test_migrate_runtime_directory_action_uses_requested_subdirectory(
-    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    harness_with_agent_relation: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ):
     """
     Arrange: a charm configured with a Jenkins home.
@@ -336,10 +371,12 @@ def test_migrate_runtime_directory_action_uses_requested_subdirectory(
     home = tmp_path / "jenkins-home"
     workspace = home / "workspace"
     workspace.mkdir(parents=True)
-    harness.update_config({"jenkins_home": str(home)})
-    harness.begin()
+    harness_with_agent_relation.update_config({"jenkins_home": str(home)})
+    harness_with_agent_relation.begin()
 
-    output = harness.run_action("migrate-runtime-directory", {"directory": str(workspace)})
+    output = harness_with_agent_relation.run_action(
+        "migrate-runtime-directory", {"directory": str(workspace)}
+    )
 
     migration_mock.assert_called_once_with(workspace)
     assert output.results["directory"] == str(workspace)
@@ -382,7 +419,9 @@ def test_migrate_runtime_directory_action_rejects_unsafe_path(
 
 
 def test_migrate_runtime_directory_action_restarts_running_service(
-    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    harness_with_agent_relation: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ):
     """
     Arrange: the agent service is running and the target home exists.
@@ -398,10 +437,10 @@ def test_migrate_runtime_directory_action_restarts_running_service(
     monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
     home = tmp_path / "jenkins-home"
     home.mkdir()
-    harness.update_config({"jenkins_home": str(home)})
-    harness.begin()
+    harness_with_agent_relation.update_config({"jenkins_home": str(home)})
+    harness_with_agent_relation.begin()
 
-    output = harness.run_action("migrate-runtime-directory")
+    output = harness_with_agent_relation.run_action("migrate-runtime-directory")
 
     migration_mock.assert_called_once_with(home)
     reset_mock.assert_called_once_with()
@@ -610,7 +649,9 @@ def test_migrate_runtime_directory_action_reports_stop_error(
 
 
 def test_migrate_runtime_directory_action_reports_restart_error(
-    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    harness_with_agent_relation: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ):
     """
     Arrange: migration succeeds but the original service cannot restart.
@@ -626,11 +667,11 @@ def test_migrate_runtime_directory_action_reports_restart_error(
     monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
     home = tmp_path / "jenkins-home"
     home.mkdir()
-    harness.update_config({"jenkins_home": str(home)})
-    harness.begin()
+    harness_with_agent_relation.update_config({"jenkins_home": str(home)})
+    harness_with_agent_relation.begin()
 
     with pytest.raises(ops.testing.ActionFailed, match="Error restarting the agent service"):
-        harness.run_action("migrate-runtime-directory")
+        harness_with_agent_relation.run_action("migrate-runtime-directory")
 
     assert reset_mock.call_count == 2
     migration_mock.assert_called_once_with(home)
