@@ -11,18 +11,13 @@ If `directory` is omitted, the action uses the configured `jenkins_home`
 (default: `/var/lib/jenkins`). A specified path must be an existing directory
 under that home.
 
-<<<<<<< HEAD
 The action preserves paths and contents. It creates no archive, does not follow
 symlinks, and does not cross filesystem boundaries. Same-filesystem bind mounts
 are not detected; detach them or exclude them from the selected path first.
 
-The charm also attempts to migrate known `remoting` and `workspace` trees during
-root-running revisions upgrades. Run this action when the upgrade blocks:
-=======
-The charm attempts to migrate the known `remoting` and `workspace` trees
-automatically during an upgrade from a root-running revision. Run this action when
-the charm blocks because automatic migration could not complete:
->>>>>>> 877936e (feat: migrate legacy runtime ownership on upgrade)
+During an upgrade from a root-running revision, the charm also attempts to
+migrate known `remoting` and `workspace` trees. Run this action when the upgrade
+blocks because automatic migration cannot complete:
 
 ```bash
 juju run --wait=5m jenkins-agent/0 migrate-runtime-directory
