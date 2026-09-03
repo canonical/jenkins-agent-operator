@@ -127,28 +127,32 @@ class JenkinsAgentService:
         except RuntimeDirectoryError:
             return RUNTIME_DIRECTORIES
 
+        unsafe_directories = []
+        for name in RUNTIME_DIRECTORIES:
+            if not self._runtime_directory_is_usable(self.state.jenkins_home / name, user_info):
+                unsafe_directories.append(name)
+        return tuple(unsafe_directories)
+
+    @staticmethod
+    def _runtime_directory_is_usable(path: Path, user_info: pwd.struct_passwd) -> bool:
+        """Check one top-level runtime directory against the launcher predicate."""
+        try:
+            entry_stat = os.lstat(path)
+        except FileNotFoundError:
+            return True
+        except OSError:
+            return False
+
         owner_bits = stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR
         # Keep this predicate in sync with prepare_runtime_directory in the launcher.
         # Bash access checks can differ for root because CAP_DAC_OVERRIDE bypasses
         # mode bits; this check intentionally enforces owner bits strictly.
-        unsafe_directories = []
-        for name in RUNTIME_DIRECTORIES:
-            path = self.state.jenkins_home / name
-            try:
-                entry_stat = os.lstat(path)
-            except FileNotFoundError:
-                continue
-            except OSError:
-                unsafe_directories.append(name)
-                continue
-            if (
-                not stat.S_ISDIR(entry_stat.st_mode)
-                or entry_stat.st_uid != user_info.pw_uid
-                or entry_stat.st_gid != user_info.pw_gid
-                or stat.S_IMODE(entry_stat.st_mode) & owner_bits != owner_bits
-            ):
-                unsafe_directories.append(name)
-        return tuple(unsafe_directories)
+        return (
+            stat.S_ISDIR(entry_stat.st_mode)
+            and entry_stat.st_uid == user_info.pw_uid
+            and entry_stat.st_gid == user_info.pw_gid
+            and stat.S_IMODE(entry_stat.st_mode) & owner_bits == owner_bits
+        )
 
     def runtime_directories_usable(self) -> bool:
         """Return whether known runtime directories are ready for the agent user."""
@@ -393,7 +397,8 @@ class JenkinsAgentService:
     # DEPRECATED compatibility migration: shared by upgrade reconciliation and the
     # operator action; remove after root-running revisions are no longer supported.
     def migrate_runtime_directories(self) -> None:
-        """Migrate known runtime directories without touching other state."""
+        """Migrate unsafe known runtime directories without touching other state."""
+        user_info = None
         for name in RUNTIME_DIRECTORIES:
             path = self.state.jenkins_home / name
             try:
@@ -402,6 +407,10 @@ class JenkinsAgentService:
                 continue
             except OSError as exc:
                 raise RuntimeDirectoryError(f"Unable to inspect runtime directory {path}") from exc
+            if user_info is None:
+                user_info = self._agent_user_info()
+            if self._runtime_directory_is_usable(path, user_info):
+                continue
             self.migrate_directory(path)
 
     def migrate_directory(self, directory: Path) -> None:

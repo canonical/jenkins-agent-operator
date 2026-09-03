@@ -77,7 +77,6 @@ def service_mocks_fixture(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         service.JenkinsAgentService,
         "migrate_runtime_directories",
         mocks.migrate_runtime_directories,
-        raising=False,
     )
     return mocks
 

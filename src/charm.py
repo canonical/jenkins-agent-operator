@@ -154,7 +154,9 @@ class JenkinsAgentCharm(ops.CharmBase):
             f"Automatic runtime ownership migration failed: {error}. {guidance}"
         )
 
-    def _automatic_runtime_migration(self, agent_service: service.JenkinsAgentService) -> bool:
+    def _is_automatic_runtime_migration_successful(
+        self, agent_service: service.JenkinsAgentService
+    ) -> bool:
         """Repair known legacy runtime directories before an upgraded service starts."""
         # UpgradeCharmEvent does not expose the previous charm revision. Unsafe
         # runtime ownership is the observable legacy signature left by revision 265.
@@ -196,7 +198,9 @@ class JenkinsAgentCharm(ops.CharmBase):
                 raise RuntimeError("Error stopping the agent service") from exc
 
         service_files_changed = self._reconcile_installation(desired_service)
-        if automatic_runtime_migration and not self._automatic_runtime_migration(desired_service):
+        if automatic_runtime_migration and not self._is_automatic_runtime_migration_successful(
+            desired_service
+        ):
             return
         self._reconcile_relation_data(desired_state)
         self._reconcile_service(
