@@ -1004,6 +1004,29 @@ def test_runtime_directories_usable_rejects_unknown_user(
     assert not service_instance.runtime_directories_usable()
 
 
+def test_migrate_directory_rejects_hard_linked_regular_file(tmp_path: Path):
+    """
+    Arrange: a runtime tree contains a regular file linked outside the tree.
+    Act: migrate the runtime tree.
+    Assert: migration rejects the shared inode before changing its permissions.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    runtime = home / "workspace"
+    runtime.mkdir(mode=0o750)
+    outside = tmp_path / "outside-state"
+    outside.write_text("legacy")
+    outside.chmod(0o400)
+    linked = runtime / "state"
+    os.link(outside, linked)
+
+    with pytest.raises(service.RuntimeDirectoryError, match="hard-linked file"):
+        _runtime_service(home).migrate_directory(runtime)
+
+    assert linked.stat().st_ino == outside.stat().st_ino
+    assert outside.stat().st_mode & 0o777 == 0o400
+
+
 def test_migrate_runtime_directories_updates_owner_permissions_without_replacing_data(
     tmp_path: Path,
 ):

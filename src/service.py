@@ -475,6 +475,10 @@ class JenkinsAgentService:
                 raise RuntimeDirectoryError(
                     f"Directory {runtime_path} contains a different filesystem"
                 )
+            if stat.S_ISREG(entry_stat.st_mode) and entry_stat.st_nlink > 1:
+                raise RuntimeDirectoryError(
+                    f"Directory {runtime_path} contains hard-linked file {entry}"
+                )
             entry_stats.append((entry, entry_stat))
         return entry_stats
 
