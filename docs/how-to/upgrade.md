@@ -32,7 +32,7 @@ reported symlink, non-directory, or mount issue, then retry with:
 juju run --wait=5m jenkins-agent/0 migrate-runtime-directory
 ```
 
-The action uses the configured `jenkins_home` by default. To select one subtree:
+The action uses the configured `jenkins_home` by default. To select one subdirectory:
 
 ```bash
 juju run --wait=5m jenkins-agent/0 migrate-runtime-directory \
