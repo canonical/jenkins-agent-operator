@@ -20,6 +20,7 @@ import pytest
 import requests
 from jubilant._juju import CLIError
 from tenacity import (
+    RetryCallState,
     retry,
     retry_if_exception_type,
     stop_after_attempt,
@@ -214,6 +215,43 @@ def test_wait_for_build_retries_transient_queue_error():
     assert build.poll()["result"] == "SUCCESS"
 
 
+def test_wait_for_build_logs_queue_state(caplog: pytest.LogCaptureFixture):
+    """
+    Arrange: a queue item has no assigned build and reports its scheduling state.
+    Act: exhaust a short build-polling retry.
+    Assert: the log records non-secret queue diagnostics.
+    """
+
+    class QueueItem:
+        def __init__(self):
+            self._data = {
+                "id": 42,
+                "task": {"name": "runtime-upgrade"},
+                "why": "waiting for an executor",
+                "blocked": True,
+                "stuck": False,
+                "buildable": False,
+                "cancelled": False,
+            }
+
+        def poll(self):
+            return self._data
+
+        def get_build_number(self):
+            return None
+
+    queue_item = QueueItem()
+    with caplog.at_level(logging.INFO), pytest.raises(jenkinsapi.custom_exceptions.NotBuiltYet):
+        cast(Any, _wait_for_build).retry_with(stop=stop_after_attempt(2), wait=wait_fixed(0))(
+            job=object(), queue_item=queue_item
+        )
+
+    assert "queue_id=42" in caplog.text
+    assert "task=runtime-upgrade" in caplog.text
+    assert "why=waiting for an executor" in caplog.text
+    assert "blocked=True" in caplog.text
+
+
 _BUILD_RETRYABLE_ERRORS = (
     jenkinsapi.custom_exceptions.JenkinsAPIException,
     jenkinsapi.custom_exceptions.NotBuiltYet,
@@ -221,8 +259,34 @@ _BUILD_RETRYABLE_ERRORS = (
 )
 
 
+def _log_build_retry(retry_state: RetryCallState) -> None:
+    """Log non-secret queue state at the start and once per minute of polling."""
+    attempt = retry_state.attempt_number
+    if attempt != 1 and attempt % 12 != 0:
+        return
+    queue_item = retry_state.kwargs.get("queue_item")
+    data = getattr(queue_item, "_data", {}) or {}
+    if not isinstance(data, dict):
+        return
+    task = data.get("task")
+    task_name = task.get("name") if isinstance(task, dict) else None
+    logger.info(
+        "Jenkins queue item pending: attempt=%s queue_id=%s task=%s why=%s "
+        "blocked=%s stuck=%s buildable=%s cancelled=%s",
+        attempt,
+        data.get("id"),
+        task_name,
+        data.get("why"),
+        data.get("blocked"),
+        data.get("stuck"),
+        data.get("buildable"),
+        data.get("cancelled"),
+    )
+
+
 @retry(
     retry=retry_if_exception_type(_BUILD_RETRYABLE_ERRORS),
+    before_sleep=_log_build_retry,
     stop=stop_after_delay(BUILD_POLL_TIMEOUT),
     wait=wait_fixed(BUILD_POLL_INTERVAL),
     reraise=True,
