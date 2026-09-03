@@ -130,6 +130,34 @@ def _initialize_client(url: str, password: str) -> jenkinsapi.jenkins.Jenkins:
     return jenkinsapi.jenkins.Jenkins(baseurl=url, username="admin", password=password, timeout=60)
 
 
+_PROXIED_SERVER_RETRY_ERRORS = (CLIError, KeyError, TypeError, ValueError)
+
+
+@retry(
+    retry=retry_if_exception_type(_PROXIED_SERVER_RETRY_ERRORS),
+    stop=stop_after_attempt(12),
+    wait=wait_fixed(5),
+    reraise=True,
+)
+def _proxied_server_url(microk8s_juju: jubilant.Juju, traefik_k8s_application: str) -> str:
+    """Return the Jenkins URL once Traefik exposes a ready backend."""
+    result = microk8s_juju.run(f"{traefik_k8s_application}/0", "show-proxied-endpoints")
+    proxied = json.loads(result.results["proxied-endpoints"])
+    try:
+        url = proxied[JENKINS_APPLICATION_NAME]["url"]
+    except (KeyError, TypeError) as exc:
+        available = sorted(proxied) if isinstance(proxied, dict) else []
+        logger.info(
+            "Jenkins endpoint is not ready through %s; available proxied endpoints: %s",
+            traefik_k8s_application,
+            available,
+        )
+        raise KeyError(JENKINS_APPLICATION_NAME) from exc
+    if not isinstance(url, str) or not url:
+        raise ValueError("Jenkins proxied endpoint has no URL")
+    return url
+
+
 def _fresh_server_client(
     microk8s_juju: jubilant.Juju, traefik_k8s_application: str
 ) -> jenkinsapi.jenkins.Jenkins:
@@ -137,12 +165,10 @@ def _fresh_server_client(
 
     The pod IP is ephemeral and the pod has a transient not-ready window when
     restarted (it briefly 404s rather than refusing). Traefik only routes to
-    ready backends, so it is the stable target. Retry the first poll to absorb
-    any residual readiness race.
+    ready backends, so it is the stable target. Retry the endpoint lookup to
+    absorb any residual relation/readiness race.
     """
-    result = microk8s_juju.run(f"{traefik_k8s_application}/0", "show-proxied-endpoints")
-    proxied = json.loads(result.results["proxied-endpoints"])
-    url = proxied[JENKINS_APPLICATION_NAME]["url"]
+    url = _proxied_server_url(microk8s_juju, traefik_k8s_application)
     admin_result = microk8s_juju.run(f"{JENKINS_APPLICATION_NAME}/0", "get-admin-password")
     password = admin_result.results.get("password", "")
     assert password, "Failed to get admin password"
@@ -248,7 +274,40 @@ def test_service_process_user_retries_when_main_pid_exits():
 
     assert user == "jenkins"
     assert juju.process_lookup_count == 2
-    assert all(command[2] == "--" for command in juju.process_commands)
+    assert all(
+        command[2:] == ("--", "sudo", "ps", "-o", "user=", "100")
+        for command in juju.process_commands
+    )
+
+
+def test_proxied_server_url_retries_until_jenkins_endpoint_is_ready():
+    """
+    Arrange: the first Traefik action response has no Jenkins endpoint.
+    Act: resolve the proxied server URL through the retry wrapper.
+    Assert: the endpoint is retried and the eventual URL is returned.
+    """
+
+    class Result:
+        def __init__(self, endpoints: dict[str, dict[str, str]]):
+            self.results = {"proxied-endpoints": json.dumps(endpoints)}
+
+    class Juju:
+        def __init__(self):
+            self.call_count = 0
+
+        def run(self, *_args):
+            self.call_count += 1
+            if self.call_count == 1:
+                return Result({})
+            return Result({JENKINS_APPLICATION_NAME: {"url": "http://jenkins.example"}})
+
+    juju = Juju()
+    url = cast(Any, _proxied_server_url).retry_with(
+        stop=stop_after_attempt(2), wait=wait_fixed(0)
+    )(microk8s_juju=juju, traefik_k8s_application="traefik-k8s")
+
+    assert url == "http://jenkins.example"
+    assert juju.call_count == 2
 
 
 def _run_job(*, job: jenkinsapi.job.Job, expected_status: str = "SUCCESS") -> tuple[int, str]:
@@ -305,7 +364,8 @@ def _service_process_user(juju: jubilant.Juju, unit_name: str) -> str:
     ).strip()
     if not pid or pid == "0":
         raise ValueError("jenkins-agent has no main process")
-    user = juju.cli("ssh", unit_name, "--", "sudo", "ps", "-o", "user=", "-p", pid).strip()
+    # Use a positional PID: Juju scans all SSH arguments for ``-p`` as an SSH port.
+    user = juju.cli("ssh", unit_name, "--", "sudo", "ps", "-o", "user=", pid).strip()
     if not user:
         raise ValueError(f"jenkins-agent process {pid} has no OS user")
     return user
