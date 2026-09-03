@@ -1085,6 +1085,7 @@ def test_migrate_runtime_directories_skips_usable_entries(
     migration_mock.assert_called_once_with(workspace)
     assert remoting.is_dir()
 
+
 def test_migrate_runtime_directories_updates_owner_permissions_without_replacing_data(
     tmp_path: Path,
 ):
