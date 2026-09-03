@@ -10,6 +10,8 @@ Each revision is versioned by the date of the revision.
 
 - Install the agent binary and readiness marker through same-directory temporary files
   so an upgrade can replace stale root-owned entries without partially overwriting them.
+- The atomically installed `agent.jar` and `.ready` files use mode `0600`, so they
+  are readable and writable only by the service user.
 
 ## 2026-08-17
 
