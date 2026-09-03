@@ -338,6 +338,8 @@ def test_upgrade_automatic_migration_stop_failure_blocks_with_action_guidance(
     service_mocks.restart.assert_not_called()
     assert harness.charm.unit.status.name == ops.BlockedStatus.name
     assert "migrate-runtime-directory" in harness.charm.unit.status.message
+    assert "service stop failure" in harness.charm.unit.status.message
+    assert "reported path" not in harness.charm.unit.status.message
 
 
 def test_upgrade_automatic_migration_failure_leaves_service_stopped(

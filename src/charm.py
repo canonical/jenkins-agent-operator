@@ -141,9 +141,17 @@ class JenkinsAgentCharm(ops.CharmBase):
     def _block_automatic_runtime_migration(self, error: Exception) -> None:
         """Set actionable blocked status after automatic migration cannot proceed."""
         logger.error("Automatic runtime ownership migration failed: %s", error)
+        if isinstance(error, service.ServiceStopError):
+            guidance = (
+                "Fix the service stop failure, then retry the upgrade or run the "
+                "migrate-runtime-directory action."
+            )
+        else:
+            guidance = (
+                "Fix the reported filesystem issue, then run the migrate-runtime-directory action."
+            )
         self.unit.status = ops.BlockedStatus(
-            f"Automatic runtime ownership migration failed: {error}. "
-            "Run the migrate-runtime-directory action after fixing the reported path."
+            f"Automatic runtime ownership migration failed: {error}. {guidance}"
         )
 
     def _automatic_runtime_migration(self, agent_service: service.JenkinsAgentService) -> bool:
