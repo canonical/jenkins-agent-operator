@@ -327,43 +327,44 @@ def test_launcher_rejects_runtime_directory_with_wrong_group(tmp_path: Path):
     assert not run.java_called.exists()
 
 
-def test_launcher_reports_runtime_symlink_requires_manual_replacement(tmp_path: Path):
-    """
-    Arrange: a runtime entry is a symbolic link.
-    Act: run the launcher.
-    Assert: startup fails with a manual-recovery diagnostic.
-    """
-    home = tmp_path / "jenkins-home"
-    home.mkdir()
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    (home / "remoting").symlink_to(outside, target_is_directory=True)
-    (home / "workspace").mkdir(mode=0o750)
-
-    run = _run_launcher(tmp_path, home, require_runtime_directories=True)
-
-    assert run.result.returncode == 1
-    assert "remoting directory is a symbolic link; replace manually" in run.result.stderr
-    assert not run.java_called.exists()
-
-
-def test_launcher_reports_non_directory_runtime_entry_requires_manual_replacement(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    ("runtime_entry", "expected_message"),
+    [
+        pytest.param(
+            "symlink",
+            "remoting directory is a symbolic link; replace manually",
+            id="symlink",
+        ),
+        pytest.param(
+            "non-directory",
+            "remoting directory is not a directory; replace manually",
+            id="non-directory",
+        ),
+    ],
+)
+def test_launcher_reports_invalid_runtime_entry_requires_manual_replacement(
+    tmp_path: Path, runtime_entry: str, expected_message: str
 ):
     """
-    Arrange: a runtime entry is not a directory.
+    Arrange: a known runtime entry is a symbolic link or non-directory.
     Act: run the launcher.
     Assert: startup fails with a manual-recovery diagnostic.
     """
     home = tmp_path / "jenkins-home"
     home.mkdir()
-    (home / "remoting").write_text("stale")
+    remoting = home / "remoting"
+    if runtime_entry == "symlink":
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        remoting.symlink_to(outside, target_is_directory=True)
+    else:
+        remoting.write_text("stale")
     (home / "workspace").mkdir(mode=0o750)
 
     run = _run_launcher(tmp_path, home, require_runtime_directories=True)
 
     assert run.result.returncode == 1
-    assert "remoting directory is not a directory; replace manually" in run.result.stderr
+    assert expected_message in run.result.stderr
     assert not run.java_called.exists()
 
 
