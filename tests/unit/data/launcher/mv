@@ -1,0 +1,17 @@
+#!/bin/bash
+# Copyright 2026 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+set -eu
+destination="${!#}"
+if [ "${FAKE_MV_FAILURE:-none}" = "agent-jar" ] && \
+   [ "$destination" = "$JENKINS_HOME/agent.jar" ]; then
+    echo "simulated agent JAR move failure" >&2
+    exit 1
+fi
+if [ "${FAKE_MV_FAILURE:-none}" = "ready" ] && \
+   [ "$destination" = "$JENKINS_HOME/.ready" ]; then
+    echo "simulated readiness marker move failure" >&2
+    exit 1
+fi
+exec /bin/mv "$@"
