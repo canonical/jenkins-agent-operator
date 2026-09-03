@@ -26,7 +26,7 @@ stopping or restarting fails, the action reports the error and leaves the
 service stopped where possible. Do not run it while a Jenkins job modifies the
 selected tree.
 
-To migrate one subtree:
+To migrate one subdirectory:
 
 ```bash
 juju run --wait=5m jenkins-agent/0 migrate-runtime-directory \
