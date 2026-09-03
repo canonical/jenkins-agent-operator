@@ -712,7 +712,9 @@ def test_agent_upgrades_from_revision_265(
     assert action["results"]["directory"] == LEGACY_AGENT_HOME
     assert action["results"]["user"] == "jenkins"
     assert action["results"]["return-code"] == 0
-    assert action["results"]["service-restarted"] in (True, "true")
+    service_restarted = action["results"]["service-restarted"]
+    # Juju action results may serialize booleans as Python-style strings.
+    assert str(service_restarted).lower() == "true"
     assert _service_is_active(juju, unit_name)
 
     migrated = _stat_entries(juju, unit_name, runtime_paths)
