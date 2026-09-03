@@ -257,9 +257,11 @@ def test_service_process_user_retries_when_main_pid_exits():
         def __init__(self):
             self.process_lookup_count = 0
             self.process_commands = []
+            self.systemctl_commands = []
 
         def cli(self, *args):
             if "systemctl" in args:
+                self.systemctl_commands.append(args)
                 return "100\n"
             self.process_commands.append(args)
             self.process_lookup_count += 1
@@ -277,6 +279,11 @@ def test_service_process_user_retries_when_main_pid_exits():
     assert all(
         command[2:] == ("--", "sudo", "ps", "-o", "user=", "100")
         for command in juju.process_commands
+    )
+    assert all(
+        command[2:]
+        == ("--", "sudo", "systemctl", "show", "--property=MainPID", "--value", "jenkins-agent")
+        for command in juju.systemctl_commands
     )
 
 
@@ -360,7 +367,15 @@ _SERVICE_USER_RETRY_ERRORS = (CLIError, ValueError)
 def _service_process_user(juju: jubilant.Juju, unit_name: str) -> str:
     """Return the OS user of the systemd agent's main process."""
     pid = juju.cli(
-        "ssh", unit_name, "sudo", "systemctl", "show", "-p", "MainPID", "--value", "jenkins-agent"
+        "ssh",
+        unit_name,
+        "--",
+        "sudo",
+        "systemctl",
+        "show",
+        "--property=MainPID",
+        "--value",
+        "jenkins-agent",
     ).strip()
     if not pid or pid == "0":
         raise ValueError("jenkins-agent has no main process")
@@ -684,7 +699,7 @@ def test_agent_upgrades_from_revision_265(
     )
     third_number, third_console = _run_job(job=job, expected_status="SUCCESS")
     assert third_number != second_number
-    assert f"agent-user={jenkins_uid}" in third_console
+    assert f"agent-user={JENKINS_AGENT_USER}" in third_console
     assert juju.cli("ssh", unit_name, "sudo", "cat", proof_path).strip() == "workspace-updated"
 
     # A later restart must retain the same migrated workspace and its contents.
