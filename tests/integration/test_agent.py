@@ -7,21 +7,38 @@ import json
 import logging
 import textwrap
 import time
+from typing import Any, cast
 
+import jenkinsapi.build
 import jenkinsapi.custom_exceptions
 import jenkinsapi.jenkins
+import jenkinsapi.job
 import jenkinsapi.node
+import jenkinsapi.queue
 import jubilant
 import pytest
 import requests
 from jubilant._juju import CLIError
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
+from tenacity import (
+    RetryCallState,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    stop_after_delay,
+    wait_fixed,
+)
 
 logger = logging.getLogger()
 
 JENKINS_APPLICATION_NAME = "jenkins-k8s"
 JENKINS_AGENT_HOME = "/srv/jenkins-agent"
 JENKINS_AGENT_USER = "jenkins-agent-test"
+LEGACY_AGENT_APPLICATION_NAME = "upgrade-agent"
+LEGACY_AGENT_HOME = "/var/lib/jenkins"
+LEGACY_AGENT_LABEL = "ownership-upgrade"
+LEGACY_AGENT_REVISION = 265
+BUILD_POLL_TIMEOUT = 600
+BUILD_POLL_INTERVAL = 5
 
 
 def _gen_test_job_xml(node_label: str, command: str = 'echo "hello world"'):
@@ -62,11 +79,13 @@ def _gen_test_job_xml(node_label: str, command: str = 'echo "hello world"'):
 
 
 def _configure_agent_remote_fs(
-    client: jenkinsapi.jenkins.Jenkins, agent_name: str
+    client: jenkinsapi.jenkins.Jenkins,
+    agent_name: str,
+    remote_fs: str = JENKINS_AGENT_HOME,
 ) -> jenkinsapi.node.Node:
-    """Set the Jenkins controller workspace root to the configured agent home."""
+    """Set the Jenkins controller workspace root for an agent."""
     node = client.get_node(agent_name)
-    node.set_config_element("remoteFS", JENKINS_AGENT_HOME)
+    node.set_config_element("remoteFS", remote_fs)
     return node
 
 
@@ -88,18 +107,14 @@ def active_agent_fixture(
     assert len(nodes) == 1, f"Expected one agent node, found {len(nodes)}"
     _configure_agent_remote_fs(jenkins_client, nodes[0].name)
     # Jenkins applies a node's remoteFS when the inbound agent reconnects.
-    juju.cli(
-        "ssh",
-        f"{jenkins_agent_application}/0",
-        "sudo",
-        "systemctl",
-        "restart",
-        "jenkins-agent",
+    unit_name = _unit_name(juju, jenkins_agent_application)
+    _restart_agent_and_wait(
+        jenkins_client=jenkins_client,
+        juju=juju,
+        unit_name=unit_name,
+        agent_name=nodes[0].name,
     )
     juju.wait(jubilant.all_active, timeout=60 * 15)
-    assert _wait_for_agent_online(jenkins_client, nodes[0].name), (
-        f"Agent {nodes[0].name} did not reconnect after updating remoteFS"
-    )
     return jenkins_agent_application
 
 
@@ -116,6 +131,34 @@ def _initialize_client(url: str, password: str) -> jenkinsapi.jenkins.Jenkins:
     return jenkinsapi.jenkins.Jenkins(baseurl=url, username="admin", password=password, timeout=60)
 
 
+_PROXIED_SERVER_RETRY_ERRORS = (CLIError, KeyError, TypeError, ValueError)
+
+
+@retry(
+    retry=retry_if_exception_type(_PROXIED_SERVER_RETRY_ERRORS),
+    stop=stop_after_attempt(12),
+    wait=wait_fixed(5),
+    reraise=True,
+)
+def _proxied_server_url(microk8s_juju: jubilant.Juju, traefik_k8s_application: str) -> str:
+    """Return the Jenkins URL once Traefik exposes a ready backend."""
+    result = microk8s_juju.run(f"{traefik_k8s_application}/0", "show-proxied-endpoints")
+    proxied = json.loads(result.results["proxied-endpoints"])
+    try:
+        url = proxied[JENKINS_APPLICATION_NAME]["url"]
+    except (KeyError, TypeError) as exc:
+        available = sorted(proxied) if isinstance(proxied, dict) else []
+        logger.info(
+            "Jenkins endpoint is not ready through %s; available proxied endpoints: %s",
+            traefik_k8s_application,
+            available,
+        )
+        raise KeyError(JENKINS_APPLICATION_NAME) from exc
+    if not isinstance(url, str) or not url:
+        raise ValueError("Jenkins proxied endpoint has no URL")
+    return url
+
+
 def _fresh_server_client(
     microk8s_juju: jubilant.Juju, traefik_k8s_application: str
 ) -> jenkinsapi.jenkins.Jenkins:
@@ -123,12 +166,10 @@ def _fresh_server_client(
 
     The pod IP is ephemeral and the pod has a transient not-ready window when
     restarted (it briefly 404s rather than refusing). Traefik only routes to
-    ready backends, so it is the stable target. Retry the first poll to absorb
-    any residual readiness race.
+    ready backends, so it is the stable target. Retry the endpoint lookup to
+    absorb any residual relation/readiness race.
     """
-    result = microk8s_juju.run(f"{traefik_k8s_application}/0", "show-proxied-endpoints")
-    proxied = json.loads(result.results["proxied-endpoints"])
-    url = proxied[JENKINS_APPLICATION_NAME]["url"]
+    url = _proxied_server_url(microk8s_juju, traefik_k8s_application)
     admin_result = microk8s_juju.run(f"{JENKINS_APPLICATION_NAME}/0", "get-admin-password")
     password = admin_result.results.get("password", "")
     assert password, "Failed to get admin password"
@@ -136,24 +177,317 @@ def _fresh_server_client(
     return _initialize_client(url, password)
 
 
+def test_wait_for_build_retries_transient_queue_error():
+    """
+    Arrange: the first queue poll raises a transient Jenkins API error.
+    Act: invoke the decorated build-polling function with no artificial wait.
+    Assert: the queue is retried and the assigned build is returned.
+    """
+
+    class QueueItem:
+        def __init__(self):
+            self.poll_count = 0
+
+        def poll(self):
+            self.poll_count += 1
+            if self.poll_count == 1:
+                raise jenkinsapi.custom_exceptions.JenkinsAPIException()
+
+        def get_build_number(self):
+            return 7
+
+    class Build:
+        def poll(self):
+            return {"building": False, "result": "SUCCESS"}
+
+    class Job:
+        def get_build(self, build_number):
+            assert build_number == 7
+            return Build()
+
+    queue_item = QueueItem()
+    build_number, build = cast(Any, _wait_for_build).retry_with(
+        stop=stop_after_attempt(2), wait=wait_fixed(0)
+    )(job=Job(), queue_item=queue_item)
+
+    assert queue_item.poll_count == 2
+    assert build_number == 7
+    assert build.poll()["result"] == "SUCCESS"
+
+
+def test_wait_for_build_logs_queue_state(caplog: pytest.LogCaptureFixture):
+    """
+    Arrange: a queue item has no assigned build and reports its scheduling state.
+    Act: exhaust a short build-polling retry.
+    Assert: the log records non-secret queue diagnostics.
+    """
+
+    class QueueItem:
+        def __init__(self):
+            self._data = {
+                "id": 42,
+                "task": {"name": "runtime-upgrade"},
+                "why": "waiting for an executor",
+                "blocked": True,
+                "stuck": False,
+                "buildable": False,
+                "cancelled": False,
+            }
+
+        def poll(self):
+            return self._data
+
+        def get_build_number(self):
+            return None
+
+    queue_item = QueueItem()
+    with caplog.at_level(logging.INFO), pytest.raises(jenkinsapi.custom_exceptions.NotBuiltYet):
+        cast(Any, _wait_for_build).retry_with(stop=stop_after_attempt(2), wait=wait_fixed(0))(
+            job=object(), queue_item=queue_item
+        )
+
+    assert "queue_id=42" in caplog.text
+    assert "task=runtime-upgrade" in caplog.text
+    assert "why=waiting for an executor" in caplog.text
+    assert "blocked=True" in caplog.text
+
+
+_BUILD_RETRYABLE_ERRORS = (
+    jenkinsapi.custom_exceptions.JenkinsAPIException,
+    jenkinsapi.custom_exceptions.NotBuiltYet,
+    requests.exceptions.RequestException,
+)
+
+
+def _log_build_retry(retry_state: RetryCallState) -> None:
+    """Log non-secret queue state at the start and once per minute of polling."""
+    attempt = retry_state.attempt_number
+    if attempt != 1 and attempt % 12 != 0:
+        return
+    queue_item = retry_state.kwargs.get("queue_item")
+    data = getattr(queue_item, "_data", {}) or {}
+    if not isinstance(data, dict):
+        return
+    task = data.get("task")
+    task_name = task.get("name") if isinstance(task, dict) else None
+    logger.info(
+        "Jenkins queue item pending: attempt=%s queue_id=%s task=%s why=%s "
+        "blocked=%s stuck=%s buildable=%s cancelled=%s",
+        attempt,
+        data.get("id"),
+        task_name,
+        data.get("why"),
+        data.get("blocked"),
+        data.get("stuck"),
+        data.get("buildable"),
+        data.get("cancelled"),
+    )
+
+
+@retry(
+    retry=retry_if_exception_type(_BUILD_RETRYABLE_ERRORS),
+    before_sleep=_log_build_retry,
+    stop=stop_after_delay(BUILD_POLL_TIMEOUT),
+    wait=wait_fixed(BUILD_POLL_INTERVAL),
+    reraise=True,
+)
+def _wait_for_build(
+    *, job: jenkinsapi.job.Job, queue_item: jenkinsapi.queue.QueueItem
+) -> tuple[int, jenkinsapi.build.Build]:
+    """Resolve a queue item to a fresh completed build using bounded polling."""
+    queue_item.poll()
+    build_number = queue_item.get_build_number()
+    if build_number is None:
+        raise jenkinsapi.custom_exceptions.NotBuiltYet()
+
+    # Re-fetch by the captured number. Do not use get_last_build(), which can race
+    # with another queued build.
+    build = job.get_build(build_number)
+    build_data = build.poll()
+    if build_data.get("building", True) or not build_data.get("result"):
+        raise jenkinsapi.custom_exceptions.NotBuiltYet()
+    build.poll()
+    return build_number, build
+
+
+def test_service_process_user_retries_when_main_pid_exits():
+    """
+    Arrange: the first process lookup sees a stale systemd main PID.
+    Act: invoke the decorated process-user helper with no artificial wait.
+    Assert: it refreshes the PID and returns the eventual process user.
+    """
+
+    class Juju:
+        def __init__(self):
+            self.process_lookup_count = 0
+            self.process_commands = []
+            self.systemctl_commands = []
+
+        def cli(self, *args):
+            if "systemctl" in args:
+                self.systemctl_commands.append(args)
+                return "100\n"
+            self.process_commands.append(args)
+            self.process_lookup_count += 1
+            if self.process_lookup_count == 1:
+                raise CLIError(1, list(args), "", "process exited")
+            return "jenkins\n"
+
+    juju = Juju()
+    user = cast(Any, _service_process_user).retry_with(
+        stop=stop_after_attempt(2), wait=wait_fixed(0)
+    )(juju=juju, unit_name="jenkins-agent/0")
+
+    assert user == "jenkins"
+    assert juju.process_lookup_count == 2
+    assert all(
+        command[2:] == ("--", "sudo", "ps", "-o", "user=", "100")
+        for command in juju.process_commands
+    )
+    assert all(
+        command[2:]
+        == ("--", "sudo", "systemctl", "show", "--property=MainPID", "--value", "jenkins-agent")
+        for command in juju.systemctl_commands
+    )
+
+
+def test_proxied_server_url_retries_until_jenkins_endpoint_is_ready():
+    """
+    Arrange: the first Traefik action response has no Jenkins endpoint.
+    Act: resolve the proxied server URL through the retry wrapper.
+    Assert: the endpoint is retried and the eventual URL is returned.
+    """
+
+    class Result:
+        def __init__(self, endpoints: dict[str, dict[str, str]]):
+            self.results = {"proxied-endpoints": json.dumps(endpoints)}
+
+    class Juju:
+        def __init__(self):
+            self.call_count = 0
+
+        def run(self, *_args):
+            self.call_count += 1
+            if self.call_count == 1:
+                return Result({})
+            return Result({JENKINS_APPLICATION_NAME: {"url": "http://jenkins.example"}})
+
+    juju = Juju()
+    url = cast(Any, _proxied_server_url).retry_with(
+        stop=stop_after_attempt(2), wait=wait_fixed(0)
+    )(microk8s_juju=juju, traefik_k8s_application="traefik-k8s")
+
+    assert url == "http://jenkins.example"
+    assert juju.call_count == 2
+
+
+def _run_job(*, job: jenkinsapi.job.Job, expected_status: str = "SUCCESS") -> tuple[int, str]:
+    """Run one job and return its build number and console output."""
+    queue_item = job.invoke()
+    build_number, build = _wait_for_build(job=job, queue_item=queue_item)
+    status = build.get_status()
+    console = build.get_console()
+    if status != expected_status:
+        logger.error("Jenkins build %s failed; console:\n%s", build, console)
+    assert status == expected_status, console
+    return build_number, console
+
+
+def _unit_name(juju: jubilant.Juju, application: str) -> str:
+    """Return the single unit currently belonging to an application."""
+    units = juju.status().get_units(application)
+    assert len(units) == 1, f"Expected one unit for {application}, found {list(units)}"
+    return next(iter(units))
+
+
+def _restart_agent_and_wait(
+    jenkins_client: jenkinsapi.jenkins.Jenkins,
+    juju: jubilant.Juju,
+    unit_name: str,
+    agent_name: str,
+) -> str:
+    """Restart the agent and return its process user after it is running."""
+    juju.cli("ssh", unit_name, "--", "sudo", "systemctl", "stop", "jenkins-agent")
+    assert _wait_for_agent_online(jenkins_client, agent_name, online=False), (
+        f"Agent {agent_name} did not go offline before restart"
+    )
+    juju.cli("ssh", unit_name, "--", "sudo", "systemctl", "start", "jenkins-agent")
+    process_user = _service_process_user(juju, unit_name)
+    assert _wait_for_agent_online(jenkins_client, agent_name), (
+        f"Agent {agent_name} did not come online after restart"
+    )
+    return process_user
+
+
+_SERVICE_USER_RETRY_ERRORS = (CLIError, ValueError)
+
+
+@retry(
+    retry=retry_if_exception_type(_SERVICE_USER_RETRY_ERRORS),
+    stop=stop_after_attempt(12),
+    wait=wait_fixed(5),
+    reraise=True,
+)
+def _service_process_user(juju: jubilant.Juju, unit_name: str) -> str:
+    """Return the OS user of the systemd agent's main process."""
+    pid = juju.cli(
+        "ssh",
+        unit_name,
+        "--",
+        "sudo",
+        "systemctl",
+        "show",
+        "--property=MainPID",
+        "--value",
+        "jenkins-agent",
+    ).strip()
+    if not pid or pid == "0":
+        raise ValueError("jenkins-agent has no main process")
+    # Use a positional PID: Juju scans all SSH arguments for ``-p`` as an SSH port.
+    user = juju.cli("ssh", unit_name, "--", "sudo", "ps", "-o", "user=", pid).strip()
+    if not user:
+        raise ValueError(f"jenkins-agent process {pid} has no OS user")
+    return user
+
+
+def _service_is_active(juju: jubilant.Juju, unit_name: str) -> bool:
+    """Return whether the remote systemd agent service is active."""
+    try:
+        return (
+            juju.cli("ssh", unit_name, "sudo", "systemctl", "is-active", "jenkins-agent").strip()
+            == "active"
+        )
+    except CLIError:
+        return False
+
+
+def _stat_entries(
+    juju: jubilant.Juju, unit_name: str, paths: list[str]
+) -> dict[str, tuple[int, int, int, int, str]]:
+    """Return numeric uid/gid/mode/inode/type for remote paths."""
+    output = juju.cli("ssh", unit_name, "sudo", "stat", "-c", "%u:%g:%a:%i:%F", *paths)
+    entries = {}
+    for path, line in zip(paths, output.splitlines(), strict=True):
+        uid, gid, mode, inode, kind = line.split(":", 4)
+        entries[path] = (int(uid), int(gid), int(mode), int(inode), kind)
+    return entries
+
+
+def _remote_exists(juju: jubilant.Juju, unit_name: str, path: str) -> bool:
+    """Return whether a path exists on the agent unit."""
+    try:
+        juju.cli("ssh", unit_name, "sudo", "test", "-e", path)
+    except CLIError:
+        return False
+    return True
+
+
 def assert_job_success(
     *, client: jenkinsapi.jenkins.Jenkins, agent_name: str, test_target_label: str
 ):
-    """Assert that a job can be created and ran successfully.
-
-    Args:
-        client: The Jenkins API client.
-        agent_name: The registered Jenkins agent node to check.
-        test_target_label: The Jenkins agent node label.
-    """
+    """Assert that a job can be created and run successfully."""
     job = client.create_job(agent_name, _gen_test_job_xml(test_target_label))
-    queue_item = job.invoke()
-    queue_item.block_until_complete()
-    build: jenkinsapi.build.Build = queue_item.get_build()
-    status = build.get_status()
-    if status != "SUCCESS":
-        logger.error("Jenkins build %s failed; console:\n%s", build, build.get_console())
-    assert status == "SUCCESS"
+    _run_job(job=job)
 
 
 def test_agent_relation(jenkins_client: jenkinsapi.jenkins.Jenkins, active_agent: str):
@@ -198,14 +532,7 @@ def test_agent_uses_configured_user_and_home(
     )
     job_name = f"{agent_name}-configuration"
     job = jenkins_client.create_job(job_name, _gen_test_job_xml("machine", command))
-    queue_item = job.invoke()
-    queue_item.block_until_complete()
-    build = queue_item.get_build()
-    status = build.get_status()
-    console = build.get_console()
-    if status != "SUCCESS":
-        logger.error("Jenkins configuration build failed; console:\n%s", console)
-    assert status == "SUCCESS"
+    _, console = _run_job(job=job)
     assert f"agent-user={JENKINS_AGENT_USER}" in console
     # Jenkins runs freestyle jobs in a workspace below the node remote FS.
     # The controller may export its own JENKINS_HOME to build processes; the
@@ -214,28 +541,240 @@ def test_agent_uses_configured_user_and_home(
 
 
 def _wait_for_agent_online(
-    jenkins_client: jenkinsapi.jenkins.Jenkins, agent_name: str, timeout: int = 600
+    jenkins_client: jenkinsapi.jenkins.Jenkins,
+    agent_name: str,
+    *,
+    online: bool = True,
+    timeout: int = 600,
 ) -> bool:
-    """Wait for a Jenkins agent to come online.
-
-    Args:
-        jenkins_client: The Jenkins API client.
-        agent_name: The agent node name.
-        timeout: Maximum wait time in seconds.
-
-    Returns:
-        True if the agent came online within the timeout.
-    """
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    """Wait for a Jenkins agent to reach the requested online state."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         try:
             node = jenkins_client.get_node(agent_name)
-            if node.is_online():
+            if node.is_online() == online:
                 return True
         except Exception:  # nosec B110
             pass
         time.sleep(10)
     return False
+
+
+def test_agent_upgrades_from_revision_265(
+    charm: str,
+    arch: str,
+    use_docker: bool,
+    jenkins_agent_requirer: str,
+    juju: jubilant.Juju,
+    microk8s_juju: jubilant.Juju,
+    ingressed_jenkins_server: str,
+    traefik_k8s_application: str,
+):
+    """
+    Arrange: deploy one root-running revision 265 agent with a real Jenkins workspace.
+    Act: refresh the same unit, exercise a nested ownership failure, then run the action.
+    Assert: atomic files, in-place ownership migration, and the same job all behave correctly.
+    """
+    if use_docker:
+        pytest.skip("Charmhub revision upgrade test requires a Juju-deployed Jenkins server")
+    if arch != "amd64":
+        pytest.skip("Charmhub revision 265 is tested only on amd64")
+
+    # Keep the Jenkins server stable; the agent upgrade is the behavior under test.
+    jenkins_client = _fresh_server_client(microk8s_juju, traefik_k8s_application)
+    juju.deploy(
+        "jenkins-agent",
+        app=LEGACY_AGENT_APPLICATION_NAME,
+        channel="latest/edge",
+        revision=LEGACY_AGENT_REVISION,
+        num_units=1,
+        base="ubuntu@24.04",
+        config={"jenkins_agent_labels": LEGACY_AGENT_LABEL},
+        constraints={"arch": "amd64"},
+    )
+    juju.wait(
+        lambda status: jubilant.all_agents_idle(status, LEGACY_AGENT_APPLICATION_NAME),
+        timeout=60 * 20,
+    )
+    unit_name = _unit_name(juju, LEGACY_AGENT_APPLICATION_NAME)
+    juju.integrate(jenkins_agent_requirer, LEGACY_AGENT_APPLICATION_NAME)
+    juju.wait(
+        lambda status: jubilant.all_active(status, LEGACY_AGENT_APPLICATION_NAME),
+        timeout=60 * 15,
+    )
+
+    agent_nodes = [
+        node
+        for node in jenkins_client.get_nodes().values()
+        if LEGACY_AGENT_APPLICATION_NAME in node.name
+    ]
+    assert len(agent_nodes) == 1, f"Expected one legacy agent node, found {len(agent_nodes)}"
+    agent_name = agent_nodes[0].name
+    legacy_node = _configure_agent_remote_fs(
+        jenkins_client, agent_name, remote_fs=LEGACY_AGENT_HOME
+    )
+    assert legacy_node.get_config_element("remoteFS") == LEGACY_AGENT_HOME
+    legacy_process_user = _restart_agent_and_wait(
+        jenkins_client=jenkins_client,
+        juju=juju,
+        unit_name=unit_name,
+        agent_name=agent_name,
+    )
+    assert legacy_process_user == "root"
+
+    job_name = f"{agent_name}-rev265-upgrade"
+    job = jenkins_client.create_job(
+        job_name,
+        _gen_test_job_xml(
+            LEGACY_AGENT_LABEL,
+            "set -eu; if [ ! -e upgrade-proof ]; then "
+            'printf "workspace-write-ok\\n" > upgrade-proof; else '
+            'printf "workspace-updated\\n" > upgrade-proof; fi; '
+            'printf "agent-user=%s\\n" "$(id -un)"',
+        ),
+    )
+    first_number, first_console = _run_job(job=job)
+    assert "agent-user=root" in first_console
+
+    proof_path = f"{LEGACY_AGENT_HOME}/workspace/{job_name}/upgrade-proof"
+    runtime_paths = [
+        f"{LEGACY_AGENT_HOME}/agent.jar",
+        f"{LEGACY_AGENT_HOME}/.ready",
+        f"{LEGACY_AGENT_HOME}/remoting",
+        f"{LEGACY_AGENT_HOME}/workspace",
+        proof_path,
+    ]
+    root_uid = int(juju.cli("ssh", unit_name, "sudo", "id", "-u", "root"))
+    root_gid = int(juju.cli("ssh", unit_name, "sudo", "id", "-g", "root"))
+    before = _stat_entries(juju, unit_name, runtime_paths)
+    assert all(before[path][0:2] == (root_uid, root_gid) for path in runtime_paths)
+    before_inodes = {path: before[path][3] for path in runtime_paths}
+    assert before[proof_path][4] == "regular file"
+
+    # The candidate detects the old top-level ownership and deliberately does not start.
+    juju.refresh(LEGACY_AGENT_APPLICATION_NAME, path=charm)
+
+    def candidate_blocked(status: jubilant.Status) -> bool:
+        application = status.apps.get(LEGACY_AGENT_APPLICATION_NAME)
+        unit = status.get_units(LEGACY_AGENT_APPLICATION_NAME).get(unit_name)
+        return bool(
+            application
+            and application.charm_origin == "local"
+            and unit
+            and unit.workload_status.current == "blocked"
+            and "migrate-runtime-directory" in (unit.workload_status.message or "")
+        )
+
+    blocked_status = juju.wait(candidate_blocked, timeout=60 * 20)
+    assert (
+        blocked_status.get_units(LEGACY_AGENT_APPLICATION_NAME)[unit_name].workload_status.current
+        == "blocked"
+    )
+    assert not _service_is_active(juju, unit_name)
+    assert not _remote_exists(juju, unit_name, f"{LEGACY_AGENT_HOME}/.ready")
+    assert _wait_for_agent_online(jenkins_client, agent_name, online=False), (
+        f"Legacy agent {agent_name} should be offline before ownership repair"
+    )
+
+    # Prepare only the top-level paths so the candidate can connect while the existing
+    # workspace proof remains root-owned. This isolates the nested-file failure case.
+    juju.cli(
+        "ssh",
+        unit_name,
+        "sudo",
+        "chown",
+        "-R",
+        "jenkins:jenkins",
+        f"{LEGACY_AGENT_HOME}/remoting",
+    )
+    juju.cli(
+        "ssh",
+        unit_name,
+        "sudo",
+        "chown",
+        "jenkins:jenkins",
+        f"{LEGACY_AGENT_HOME}/workspace",
+    )
+    # A config event provides a deterministic second reconcile without replacing the unit.
+    juju.config(
+        LEGACY_AGENT_APPLICATION_NAME,
+        {"jenkins_agent_labels": f"{LEGACY_AGENT_LABEL},migration-test"},
+    )
+    juju.wait(jubilant.all_active, timeout=60 * 15)
+    assert _wait_for_agent_online(jenkins_client, agent_name), (
+        f"Candidate agent {agent_name} did not reconnect after top-level preparation"
+    )
+    assert _service_process_user(juju, unit_name) == "jenkins"
+    node_config = jenkins_client.get_node(agent_name).get_config_element("remoteFS")
+    assert node_config == LEGACY_AGENT_HOME
+
+    candidate_paths = _stat_entries(juju, unit_name, runtime_paths)
+    jenkins_uid = int(juju.cli("ssh", unit_name, "sudo", "id", "-u", "jenkins"))
+    jenkins_gid = int(juju.cli("ssh", unit_name, "sudo", "id", "-g", "jenkins"))
+    assert candidate_paths[f"{LEGACY_AGENT_HOME}/agent.jar"][0:2] == (jenkins_uid, jenkins_gid)
+    assert candidate_paths[f"{LEGACY_AGENT_HOME}/.ready"][0:2] == (jenkins_uid, jenkins_gid)
+    assert candidate_paths[proof_path][0:2] == (root_uid, root_gid)
+    assert candidate_paths[proof_path][3] == before_inodes[proof_path]
+    assert (
+        candidate_paths[f"{LEGACY_AGENT_HOME}/workspace"][3]
+        == before_inodes[f"{LEGACY_AGENT_HOME}/workspace"]
+    )
+    assert (
+        candidate_paths[f"{LEGACY_AGENT_HOME}/agent.jar"][3]
+        != before_inodes[f"{LEGACY_AGENT_HOME}/agent.jar"]
+    )
+    assert (
+        candidate_paths[f"{LEGACY_AGENT_HOME}/.ready"][3]
+        != before_inodes[f"{LEGACY_AGENT_HOME}/.ready"]
+    )
+
+    # The same existing job now tries to overwrite the root-owned nested proof.
+    second_number, second_console = _run_job(job=job, expected_status="FAILURE")
+    assert second_number != first_number
+    assert "Permission denied" in second_console
+
+    # Run the explicit ownership action against the configured Jenkins home. It
+    # stops the active service before migration and restores it afterward.
+    action_output = juju.cli(
+        "run",
+        "--format=json",
+        "--wait=20m",
+        unit_name,
+        "migrate-runtime-directory",
+    )
+    action = json.loads(action_output)[unit_name]
+    assert action["status"] == "completed", action_output
+    assert action["results"]["directory"] == LEGACY_AGENT_HOME
+    assert action["results"]["user"] == "jenkins"
+    assert action["results"]["return-code"] == 0
+    assert action["results"]["service-restarted"] in (True, "true")
+    assert _service_is_active(juju, unit_name)
+
+    migrated = _stat_entries(juju, unit_name, runtime_paths)
+    assert all(migrated[path][0:2] == (jenkins_uid, jenkins_gid) for path in runtime_paths)
+    assert migrated[proof_path][3] == before_inodes[proof_path]
+    assert juju.cli("ssh", unit_name, "sudo", "cat", proof_path).strip() == "workspace-write-ok"
+    for archive_name in (".jenkins-agent-legacy-remoting", ".jenkins-agent-legacy-workspace"):
+        with pytest.raises(CLIError):
+            juju.cli("ssh", unit_name, "sudo", "test", "-e", f"{LEGACY_AGENT_HOME}/{archive_name}")
+
+    assert _wait_for_agent_online(jenkins_client, agent_name), (
+        f"Agent {agent_name} did not reconnect after ownership migration"
+    )
+    third_number, third_console = _run_job(job=job, expected_status="SUCCESS")
+    assert third_number != second_number
+    assert f"agent-user={JENKINS_AGENT_USER}" in third_console
+    assert juju.cli("ssh", unit_name, "sudo", "cat", proof_path).strip() == "workspace-updated"
+
+    # A later restart must retain the same migrated workspace and its contents.
+    _restart_agent_and_wait(
+        jenkins_client=jenkins_client,
+        juju=juju,
+        unit_name=unit_name,
+        agent_name=agent_name,
+    )
+    final_paths = _stat_entries(juju, unit_name, [proof_path])
+    assert final_paths[proof_path][3] == before_inodes[proof_path]
 
 
 def test_agent_reconnects_after_server_refresh(

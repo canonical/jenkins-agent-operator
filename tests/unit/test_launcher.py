@@ -18,6 +18,8 @@ import pytest
 import service
 from charm_state import State
 
+RUNTIME_DIRECTORIES = ("remoting", "workspace")
+
 
 @dataclass
 class LauncherRun:
@@ -42,6 +44,8 @@ def _run_launcher(
     *,
     curl_mode: str = "success",
     move_failure: str = "none",
+    require_runtime_directories: bool = False,
+    fail_runtime_directory_creation: bool = False,
 ) -> LauncherRun:
     """Render and run the launcher with explicit fake-command modes."""
     fake_bin = tmp_path / "bin"
@@ -52,6 +56,8 @@ def _run_launcher(
         _install_fake_command(fake_bin, "mv")
     curl_output = tmp_path / "curl-output"
     java_called = tmp_path / "java-called"
+    if fail_runtime_directory_creation:
+        _install_fake_command(fake_bin, "mkdir")
     state = cast(
         State, SimpleNamespace(agent_user="jenkins", jenkins_home=home, websocket_mode=True)
     )
@@ -70,6 +76,7 @@ def _run_launcher(
         "FAKE_JAVA_CALLED": str(java_called),
         "FAKE_CURL_MODE": curl_mode,
         "FAKE_MV_FAILURE": move_failure,
+        "FAKE_JAVA_REQUIRE_RUNTIME_DIRECTORIES": str(require_runtime_directories).lower(),
     }
     result = subprocess.run(  # nosec B603 - launcher and commands are test fixtures
         [str(launcher)], capture_output=True, text=True, env=env, check=False
@@ -224,3 +231,161 @@ def test_launcher_quotes_home_paths(tmp_path: Path):
     assert run.result.returncode == 0, run.result.stderr
     assert (home / "agent.jar").read_text() == "new-agent"
     assert run.java_called.exists()
+
+
+def test_launcher_creates_missing_runtime_directories(tmp_path: Path):
+    """
+    Arrange: remoting and workspace do not exist.
+    Act: run the launcher.
+    Assert: private writable runtime directories are created.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+
+    run = _run_launcher(tmp_path, home, require_runtime_directories=True)
+
+    assert run.result.returncode == 0, run.result.stderr
+    for name in RUNTIME_DIRECTORIES:
+        directory = home / name
+        assert directory.is_dir()
+        assert directory.stat().st_mode & 0o777 == 0o750
+
+
+def test_launcher_keeps_safe_runtime_directories_across_restarts(tmp_path: Path):
+    """
+    Arrange: runtime directories already contain writable data.
+    Act: start the launcher twice.
+    Assert: both starts preserve the original directories and contents.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    inodes = {}
+    for name in RUNTIME_DIRECTORIES:
+        directory = home / name
+        directory.mkdir()
+        directory.chmod(0o750)
+        (directory / "sentinel").write_text(name)
+        inodes[name] = directory.stat().st_ino
+
+    first = _run_launcher(tmp_path, home, require_runtime_directories=True)
+    second_tmp = tmp_path / "second"
+    second_tmp.mkdir()
+    second = _run_launcher(second_tmp, home, require_runtime_directories=True)
+
+    assert first.result.returncode == 0, first.result.stderr
+    assert second.result.returncode == 0, second.result.stderr
+    for name in RUNTIME_DIRECTORIES:
+        directory = home / name
+        assert directory.stat().st_ino == inodes[name]
+        assert (directory / "sentinel").read_text() == name
+
+
+def test_launcher_rejects_unmigrated_runtime_directory(tmp_path: Path):
+    """
+    Arrange: a runtime directory remains owned by the launcher but lacks write access.
+    Act: run the launcher without the privileged migration step.
+    Assert: startup fails closed and the Java process is not started.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    remoting = home / "remoting"
+    remoting.mkdir(mode=0o750)
+    workspace = home / "workspace"
+    workspace.mkdir(mode=0o555)
+
+    run = _run_launcher(tmp_path, home, require_runtime_directories=True)
+
+    assert run.result.returncode == 1
+    assert (
+        "workspace directory lacks owner access or group ownership; run migrate-runtime-directory"
+        in run.result.stderr
+    )
+    assert workspace.is_dir()
+    assert not run.java_called.exists()
+
+
+def test_launcher_rejects_runtime_directory_with_wrong_group(tmp_path: Path):
+    """
+    Arrange: runtime directories have owner access but a different group ID.
+    Act: run the launcher with a mismatched runtime group.
+    Assert: startup fails closed before Java starts.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    remoting = home / "remoting"
+    remoting.mkdir(mode=0o750)
+    (home / "workspace").mkdir(mode=0o750)
+    wrong_group = next((gid for gid in os.getgroups() if gid != os.getgid()), None)
+    if wrong_group is None:
+        pytest.skip("the test user has no supplementary group for a mismatch")
+    os.chown(remoting, os.getuid(), wrong_group)
+
+    run = _run_launcher(tmp_path, home, require_runtime_directories=True)
+
+    assert run.result.returncode == 1
+    assert "remoting directory lacks owner access or group ownership" in run.result.stderr
+    assert not run.java_called.exists()
+
+
+@pytest.mark.parametrize(
+    ("runtime_entry", "expected_message"),
+    [
+        pytest.param(
+            "symlink",
+            "remoting directory is a symbolic link; replace manually",
+            id="symlink",
+        ),
+        pytest.param(
+            "non-directory",
+            "remoting directory is not a directory; replace manually",
+            id="non-directory",
+        ),
+    ],
+)
+def test_launcher_reports_invalid_runtime_entry_requires_manual_replacement(
+    tmp_path: Path, runtime_entry: str, expected_message: str
+):
+    """
+    Arrange: a known runtime entry is a symbolic link or non-directory.
+    Act: run the launcher.
+    Assert: startup fails with a manual-recovery diagnostic.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    remoting = home / "remoting"
+    if runtime_entry == "symlink":
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        remoting.symlink_to(outside, target_is_directory=True)
+    else:
+        remoting.write_text("stale")
+    (home / "workspace").mkdir(mode=0o750)
+
+    run = _run_launcher(tmp_path, home, require_runtime_directories=True)
+
+    assert run.result.returncode == 1
+    assert expected_message in run.result.stderr
+    assert not run.java_called.exists()
+
+
+def test_launcher_reports_runtime_directory_creation_failure(tmp_path: Path):
+    """
+    Arrange: the workspace directory is missing and mkdir fails for runtime paths.
+    Act: run the launcher.
+    Assert: startup fails before the Java process is started.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    (home / "remoting").mkdir(mode=0o750)
+
+    run = _run_launcher(
+        tmp_path,
+        home,
+        require_runtime_directories=True,
+        fail_runtime_directory_creation=True,
+    )
+
+    assert run.result.returncode == 1
+    assert "Unable to create a writable workspace directory" in run.result.stderr
+    assert not (home / "workspace").exists()
+    assert not run.java_called.exists()

@@ -11,6 +11,8 @@ Each revision is versioned by the date of the revision.
 - Install `agent.jar` and `.ready` through same-directory temporary files and
   atomic rename, preventing partial files during upgrades.
 - Installed `agent.jar` and `.ready` files use mode `0600`.
+- Add the deprecated `migrate-runtime-directory` action to repair root-owned
+  Jenkins trees in place.
 
 ## 2026-08-17
 
