@@ -13,6 +13,8 @@ Each revision is versioned by the date of the revision.
 - Installed `agent.jar` and `.ready` files use mode `0600`.
 - Add the deprecated `migrate-runtime-directory` action to repair root-owned
   Jenkins trees in place.
+- On upgrade, automatically migrate legacy `remoting` and `workspace` trees when
+  safe; otherwise block with recovery guidance.
 
 ## 2026-08-17
 

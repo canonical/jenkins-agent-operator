@@ -1041,6 +1041,51 @@ def test_migrate_directory_rejects_hard_linked_regular_file(tmp_path: Path):
     assert outside.stat().st_mode & 0o777 == 0o400
 
 
+def test_migrate_runtime_directories_migrates_existing_runtime_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """
+    Arrange: only one known runtime directory exists under Jenkins home.
+    Act: request automatic runtime migration.
+    Assert: only the existing runtime directory is passed to migration.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    workspace = home / "workspace"
+    workspace.mkdir(mode=0o500)
+    service_instance = _runtime_service(home)
+    migration_mock = MagicMock()
+    monkeypatch.setattr(service_instance, "migrate_directory", migration_mock)
+
+    service_instance.migrate_runtime_directories()
+
+    migration_mock.assert_called_once_with(workspace)
+
+
+def test_migrate_runtime_directories_skips_usable_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """
+    Arrange: one runtime directory is usable and another needs migration.
+    Act: request automatic runtime migration.
+    Assert: only the unsafe runtime directory is traversed.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    remoting = home / "remoting"
+    remoting.mkdir(mode=0o750)
+    workspace = home / "workspace"
+    workspace.mkdir(mode=0o500)
+    service_instance = _runtime_service(home)
+    migration_mock = MagicMock()
+    monkeypatch.setattr(service_instance, "migrate_directory", migration_mock)
+
+    service_instance.migrate_runtime_directories()
+
+    migration_mock.assert_called_once_with(workspace)
+    assert remoting.is_dir()
+
+
 def test_migrate_runtime_directories_updates_owner_permissions_without_replacing_data(
     tmp_path: Path,
 ):
