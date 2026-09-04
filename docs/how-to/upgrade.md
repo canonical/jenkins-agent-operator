@@ -25,8 +25,11 @@ During an upgrade, the charm safely migrates existing top-level `remoting` and
 not archive or change unrelated Jenkins state. After a successful migration, the
 service starts automatically, including when it was stopped before the upgrade.
 
-If migration cannot proceed, the charm blocks and reports the reason. Fix any
-reported symlink, non-directory, or mount issue, then retry with:
+If automatic migration cannot proceed, the unit becomes `blocked`. `juju status`
+reports a message beginning with `Automatic runtime ownership migration failed:`
+and includes the failure reason. It directs you to fix the reported issue before
+retrying the upgrade or action. Fix any reported symlink, non-directory, or mount
+issue, then retry with:
 
 ```bash
 juju run --wait=5m jenkins-agent/0 migrate-runtime-directory
