@@ -98,6 +98,13 @@ class JenkinsAgentCharm(ops.CharmBase):
                 # Leave a previously running service stopped when migration fails.
                 raise
             if state.agent_relation_credentials:
+                unsafe_directories = agent_service.unsafe_runtime_directories()
+                if unsafe_directories:
+                    raise service.RuntimeDirectoryError(
+                        "Runtime directories remain unsafe: "
+                        f"{', '.join(unsafe_directories)}. Migrate the complete Jenkins home "
+                        "or run the action for each unsafe directory."
+                    )
                 # A successful repair resumes the desired service state, including
                 # services that were already stopped when the action began.
                 try:

@@ -331,6 +331,11 @@ def test_migrate_runtime_directory_action_defaults_to_configured_home(
     """
     migration_mock = MagicMock()
     restart_mock = MagicMock()
+    monkeypatch.setattr(
+        service.JenkinsAgentService,
+        "unsafe_runtime_directories",
+        MagicMock(return_value=()),
+    )
     monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
     monkeypatch.setattr(service.JenkinsAgentService, "restart", restart_mock)
     monkeypatch.setattr(
@@ -363,6 +368,11 @@ def test_migrate_runtime_directory_action_uses_requested_subdirectory(
     """
     migration_mock = MagicMock()
     restart_mock = MagicMock()
+    monkeypatch.setattr(
+        service.JenkinsAgentService,
+        "unsafe_runtime_directories",
+        MagicMock(return_value=()),
+    )
     monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
     monkeypatch.setattr(service.JenkinsAgentService, "restart", restart_mock)
     monkeypatch.setattr(
@@ -431,6 +441,11 @@ def test_migrate_runtime_directory_action_restarts_running_service(
     migration_mock = MagicMock()
     reset_mock = MagicMock()
     restart_mock = MagicMock()
+    monkeypatch.setattr(
+        service.JenkinsAgentService,
+        "unsafe_runtime_directories",
+        MagicMock(return_value=()),
+    )
     monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
     monkeypatch.setattr(service.JenkinsAgentService, "reset", reset_mock)
     monkeypatch.setattr(service.JenkinsAgentService, "restart", restart_mock)
@@ -648,6 +663,46 @@ def test_migrate_runtime_directory_action_reports_stop_error(
     migration_mock.assert_not_called()
 
 
+def test_migrate_runtime_directory_action_reports_unmigrated_runtime_directory(
+    harness_with_agent_relation: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    service_mocks: SimpleNamespace,
+    tmp_path: Path,
+):
+    """
+    Arrange: the selected directory migrates but another runtime directory remains unsafe.
+    Act: run the ownership-migration action with relation credentials available.
+    Assert: the action reports the unsafe directory before attempting a restart.
+    """
+    migration_mock = MagicMock()
+    unsafe_runtime_directories_mock = MagicMock(return_value=("remoting",))
+    monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
+    monkeypatch.setattr(
+        service.JenkinsAgentService,
+        "unsafe_runtime_directories",
+        unsafe_runtime_directories_mock,
+    )
+    monkeypatch.setattr(
+        service.JenkinsAgentService,
+        "is_running",
+        PropertyMock(return_value=True),
+    )
+    home = tmp_path / "jenkins-home"
+    workspace = home / "workspace"
+    workspace.mkdir(parents=True)
+    harness_with_agent_relation.update_config({"jenkins_home": str(home)})
+    harness_with_agent_relation.begin()
+
+    with pytest.raises(ops.testing.ActionFailed, match="remoting"):
+        harness_with_agent_relation.run_action(
+            "migrate-runtime-directory", {"directory": str(workspace)}
+        )
+
+    migration_mock.assert_called_once_with(workspace)
+    service_mocks.reset.assert_called_once_with()
+    service_mocks.restart.assert_not_called()
+
+
 def test_migrate_runtime_directory_action_reports_restart_error(
     harness_with_agent_relation: ops.testing.Harness,
     monkeypatch: pytest.MonkeyPatch,
@@ -661,6 +716,11 @@ def test_migrate_runtime_directory_action_reports_restart_error(
     reset_mock = MagicMock()
     migration_mock = MagicMock()
     restart_mock = MagicMock(side_effect=service.ServiceRestartError("restart failed"))
+    monkeypatch.setattr(
+        service.JenkinsAgentService,
+        "unsafe_runtime_directories",
+        MagicMock(return_value=()),
+    )
     monkeypatch.setattr(service.JenkinsAgentService, "reset", reset_mock)
     monkeypatch.setattr(service.JenkinsAgentService, "migrate_directory", migration_mock)
     monkeypatch.setattr(service.JenkinsAgentService, "restart", restart_mock)

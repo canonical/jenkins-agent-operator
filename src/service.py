@@ -114,8 +114,8 @@ class JenkinsAgentService:
         )
         self._template_loader.filters["systemd_quote"] = _systemd_quote
 
-    def runtime_directories_usable(self) -> bool:
-        """Return whether known runtime directories are ready for the agent user.
+    def unsafe_runtime_directories(self) -> tuple[str, ...]:
+        """Return known runtime directories that are unsafe for the agent user.
 
         Missing directories are valid because the unprivileged launcher creates them.
         Existing directories must be real directories owned by the configured user and
@@ -125,12 +125,13 @@ class JenkinsAgentService:
         try:
             user_info = self._agent_user_info()
         except RuntimeDirectoryError:
-            return False
+            return RUNTIME_DIRECTORIES
 
         owner_bits = stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR
         # Keep this predicate in sync with prepare_runtime_directory in the launcher.
         # Bash access checks can differ for root because CAP_DAC_OVERRIDE bypasses
         # mode bits; this check intentionally enforces owner bits strictly.
+        unsafe_directories = []
         for name in RUNTIME_DIRECTORIES:
             path = self.state.jenkins_home / name
             try:
@@ -138,15 +139,20 @@ class JenkinsAgentService:
             except FileNotFoundError:
                 continue
             except OSError:
-                return False
+                unsafe_directories.append(name)
+                continue
             if (
                 not stat.S_ISDIR(entry_stat.st_mode)
                 or entry_stat.st_uid != user_info.pw_uid
                 or entry_stat.st_gid != user_info.pw_gid
                 or stat.S_IMODE(entry_stat.st_mode) & owner_bits != owner_bits
             ):
-                return False
-        return True
+                unsafe_directories.append(name)
+        return tuple(unsafe_directories)
+
+    def runtime_directories_usable(self) -> bool:
+        """Return whether known runtime directories are ready for the agent user."""
+        return not self.unsafe_runtime_directories()
 
     def _render_file(self, path: Path, content: str, mode: int, owner: str = "root") -> None:
         """Write a file to disk, setting its mode and ownership.

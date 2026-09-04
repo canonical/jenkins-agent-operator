@@ -932,6 +932,20 @@ def test_runtime_directories_usable_accepts_missing_entries(tmp_path: Path):
     assert _runtime_service(home).runtime_directories_usable()
 
 
+def test_unsafe_runtime_directories_reports_only_unsafe_entries(tmp_path: Path):
+    """
+    Arrange: remoting lacks owner write access while workspace is usable.
+    Act: inspect the known runtime directories.
+    Assert: only remoting is reported as unsafe.
+    """
+    home = tmp_path / "jenkins-home"
+    home.mkdir()
+    (home / "remoting").mkdir(mode=0o500)
+    (home / "workspace").mkdir(mode=0o700)
+
+    assert _runtime_service(home).unsafe_runtime_directories() == ("remoting",)
+
+
 def test_runtime_directories_usable_rejects_wrong_group(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
