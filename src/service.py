@@ -291,7 +291,10 @@ class JenkinsAgentService:
         Does nothing for the root user. For non-root users, the user is created
         (regular user, not a system account) with the configured home directory if
         missing, the home directory is created and owned by the user, and a
-        passwordless sudo entry is written to /etc/sudoers.d. Failures raise
+        passwordless sudo entry is written to /etc/sudoers.d. If the user already
+        exists but its recorded home directory differs from the configured
+        jenkins_home (e.g. after a config change), the account's home is relocated,
+        moving its existing contents along with it. Failures raise
         PackageInstallError so the charm does not enable a broken service.
         """
         username = self.state.agent_user
@@ -300,7 +303,7 @@ class JenkinsAgentService:
             return
 
         try:
-            pwd.getpwnam(username)
+            user_info = pwd.getpwnam(username)
         except KeyError:
             logger.info("Creating user %s", username)
             try:
@@ -319,6 +322,8 @@ class JenkinsAgentService:
                 )
             except (subprocess.CalledProcessError, FileNotFoundError) as exc:
                 raise PackageInstallError(f"Failed to create user {username}") from exc
+        else:
+            self._relocate_user_home(username, Path(user_info.pw_dir), home)
         try:
             if home.is_symlink():
                 raise OSError(f"Jenkins home must not be a symbolic link: {home}")
@@ -329,6 +334,43 @@ class JenkinsAgentService:
             raise PackageInstallError(f"Failed to prepare Jenkins home {home}") from exc
 
         self._grant_passwordless_sudo(username)
+
+    def _relocate_user_home(self, username: str, current_home: Path, desired_home: Path) -> None:
+        """Update the agent user's home directory when jenkins_home configuration changes.
+
+        Uses usermod to update the user's recorded home directory and, when
+        possible, move its existing contents to the new location, so data
+        already present under the previous jenkins_home is not orphaned.
+
+        Args:
+            username: The agent user whose home directory should be checked.
+            current_home: The user's currently recorded home directory.
+            desired_home: The configured jenkins_home the user's home should match.
+
+        Raises:
+            PackageInstallError: if usermod fails to update the home directory.
+        """
+        if current_home == desired_home:
+            return
+
+        logger.info(
+            "Relocating home directory for %s from %s to %s",
+            username,
+            current_home,
+            desired_home,
+        )
+        args = ["/usr/sbin/usermod", "--home", str(desired_home)]
+        # --move-home moves the contents of the current home directory. It requires
+        # the current home to exist and the new home to not already exist.
+        if current_home.exists() and not desired_home.exists():
+            args.append("--move-home")
+        args.append(username)
+        try:
+            subprocess.run(  # nosec: B603 - fixed-path system binary (usermod)
+                args, check=True, capture_output=True
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+            raise PackageInstallError(f"Failed to update home directory for {username}") from exc
 
     def _grant_passwordless_sudo(self, username: str) -> None:
         """Validate and write a passwordless sudo rule for the agent user."""
