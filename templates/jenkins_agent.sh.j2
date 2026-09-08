@@ -95,10 +95,49 @@ write_ready_marker() {
     trap - EXIT
 }
 
+prepare_runtime_directory() {
+    local name="$1"
+    local runtime_path="${JENKINS_HOME}/${name}"
+
+    if [ ! -e "$runtime_path" ] && [ ! -L "$runtime_path" ]; then
+        if ! mkdir --mode=0750 -- "$runtime_path"; then
+            err "Unable to create a writable ${name} directory"
+            return 1
+        fi
+        return 0
+    fi
+    # Keep this predicate in sync with JenkinsAgentService.runtime_directories_usable.
+    # systemd can start the service before a Juju reconcile, so the launcher must
+    # fail closed if an existing legacy tree was not migrated first.
+    if [ -L "$runtime_path" ]; then
+        err "${name} directory is a symbolic link; replace manually before retrying"
+        return 1
+    fi
+    if [ ! -d "$runtime_path" ]; then
+        err "${name} directory is not a directory; replace manually before retrying"
+        return 1
+    fi
+    if [ ! -O "$runtime_path" ] || [ ! -G "$runtime_path" ] || \
+       [ ! -r "$runtime_path" ] || [ ! -w "$runtime_path" ] || \
+       [ ! -x "$runtime_path" ]; then
+        err "${name} directory lacks owner access or group ownership; run migrate-runtime-directory"
+        return 1
+    fi
+    return 0
+}
+
+if ! prepare_runtime_directory remoting; then
+    exit 1
+fi
+if ! prepare_runtime_directory workspace; then
+    exit 1
+fi
+
 # Specify the agent as ready
 if ! write_ready_marker; then
     exit 1
 fi
+
 info "Connecting to jenkins"
 # Launch the Jenkins agent with the following flags:
 #   -url: Jenkins server URL (e.g., http://jenkins.example.com:8080)

@@ -19,6 +19,17 @@ if TYPE_CHECKING:
     from charm import JenkinsAgentCharm
 
 
+def test_agent_meta_normalizes_comma_separated_labels_for_jenkins():
+    """Relation metadata preserves the documented comma-separated label format."""
+    metadata = charm_state.AgentMeta(
+        executors=1,
+        labels="ownership-upgrade,migration-test",
+        name="agent",
+    )
+
+    assert metadata.as_dict()["labels"] == "ownership-upgrade,migration-test"
+
+
 def test_from_charm_invalid_metadata(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
 ):

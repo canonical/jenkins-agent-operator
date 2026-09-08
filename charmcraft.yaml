@@ -43,6 +43,22 @@ parts:
     organize:
       "*": "templates/"
 
+actions:
+  migrate-runtime-directory:
+    description: >
+      Recursively update ownership and owner permissions for a Jenkins directory.
+      The target user is the configured agent_user and the directory defaults to
+      jenkins_home. An active agent service is stopped before migration and restored
+      after a successful migration.
+    params:
+      directory:
+        type: string
+        default: ""
+        description: >
+          Existing directory under the configured jenkins_home to migrate. Leave empty
+          to migrate the complete configured Jenkins home.
+    additionalProperties: false
+
 platforms:
   ubuntu@24.04:amd64:
   ubuntu@22.04:amd64:
