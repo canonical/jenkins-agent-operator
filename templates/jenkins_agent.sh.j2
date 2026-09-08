@@ -45,14 +45,60 @@ if [ "$CONFIG_MISSING" == true ]; then
     exit 1
 fi
 
-info "Fetching the agent binary"
-if ! curl --connect-timeout 1200 "${JENKINS_URL}/jnlpJars/agent.jar" -o "${JENKINS_HOME}/agent.jar"; then
-    err Unable to download agent binary
+TEMPORARY_FILE=""
+cleanup_temporary_file() {
+    if [ -n "$TEMPORARY_FILE" ]; then
+        rm -f -- "$TEMPORARY_FILE"
+    fi
+}
+
+install_agent_jar() {
+    local agent_jar="${JENKINS_HOME}/agent.jar"
+
+    if ! TEMPORARY_FILE="$(mktemp -- "${JENKINS_HOME}/.agent.jar.XXXXXX")"; then
+        err "Unable to create a temporary file for the agent binary"
+        return 1
+    fi
+    trap cleanup_temporary_file EXIT
+
+    info "Fetching the agent binary"
+    if ! curl --fail --connect-timeout 1200 "${JENKINS_URL}/jnlpJars/agent.jar" -o "$TEMPORARY_FILE"; then
+        err "Unable to download agent binary"
+        return 1
+    fi
+    if ! mv -fT -- "$TEMPORARY_FILE" "$agent_jar"; then
+        err "Unable to install agent binary"
+        return 1
+    fi
+    TEMPORARY_FILE=""
+    trap - EXIT
+}
+
+if ! install_agent_jar; then
     exit 1
 fi
 
+write_ready_marker() {
+    local ready_marker="${JENKINS_HOME}/.ready"
+
+    if ! TEMPORARY_FILE="$(mktemp -- "${JENKINS_HOME}/.ready.XXXXXX")"; then
+        err "Unable to create a temporary readiness marker"
+        return 1
+    fi
+    trap cleanup_temporary_file EXIT
+
+    if ! mv -fT -- "$TEMPORARY_FILE" "$ready_marker"; then
+        err "Unable to install readiness marker"
+        return 1
+    fi
+    TEMPORARY_FILE=""
+    trap - EXIT
+}
+
 # Specify the agent as ready
-touch "${JENKINS_HOME}/.ready"
+if ! write_ready_marker; then
+    exit 1
+fi
 info "Connecting to jenkins"
 # Launch the Jenkins agent with the following flags:
 #   -url: Jenkins server URL (e.g., http://jenkins.example.com:8080)
