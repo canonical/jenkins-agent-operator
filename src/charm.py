@@ -31,11 +31,11 @@ class JenkinsAgentCharm(ops.CharmBase):
             self.on.migrate_runtime_directory_action,
             self._on_migrate_runtime_directory_action,
         )
+        self.framework.observe(self.on.upgrade_charm, self._on_upgrade_charm)
         for event in (
             self.on.install,
             self.on.start,
             self.on.config_changed,
-            self.on.upgrade_charm,
             self.on.update_status,
             self.on[AGENT_RELATION].relation_joined,
             self.on[AGENT_RELATION].relation_changed,
@@ -54,11 +54,10 @@ class JenkinsAgentCharm(ops.CharmBase):
                 return True
         return False
 
-    def _action_directory(self, state: State, event: ops.ActionEvent) -> Path:
-        """Validate and resolve the optional ownership-action directory."""
-        requested = str(event.params.get("directory") or state.jenkins_home)
-        directory = Path(requested)
-        home = state.jenkins_home
+    def _validate_migration_directory(
+        self, home: Path, directory: Path, *, require_existing: bool = True
+    ) -> Path:
+        """Validate a migration path before any ownership changes."""
         if ".." in directory.parts:
             raise ValueError("directory must not contain '..'")
         if not directory.is_absolute():
@@ -75,9 +74,14 @@ class JenkinsAgentCharm(ops.CharmBase):
             raise ValueError(f"Unable to resolve directory {directory}") from exc
         if resolved_directory != resolved_home and resolved_home not in resolved_directory.parents:
             raise ValueError("directory must be under the configured Jenkins home")
-        if not directory.exists() or not directory.is_dir():
+        if require_existing and (not directory.exists() or not directory.is_dir()):
             raise ValueError(f"directory {directory} must be an existing directory")
         return directory
+
+    def _action_directory(self, state: State, event: ops.ActionEvent) -> Path:
+        """Validate and resolve the optional ownership-action directory."""
+        requested = str(event.params.get("directory") or state.jenkins_home)
+        return self._validate_migration_directory(state.jenkins_home, Path(requested))
 
     def _on_migrate_runtime_directory_action(self, event: ops.ActionEvent) -> None:
         """Migrate an operator-selected Jenkins directory to the service user."""
@@ -134,7 +138,60 @@ class JenkinsAgentCharm(ops.CharmBase):
             }
         )
 
-    def _reconcile(self, _: ops.EventBase) -> None:
+    def _on_upgrade_charm(self, event: ops.UpgradeCharmEvent) -> None:
+        """Reconcile an upgrade and repair legacy runtime ownership when needed."""
+        self._reconcile(event, automatic_runtime_migration=True)
+
+    def _block_automatic_runtime_migration(self, error: Exception) -> None:
+        """Set actionable blocked status after automatic migration cannot proceed."""
+        logger.error("Automatic runtime ownership migration failed: %s", error)
+        if isinstance(error, service.ServiceStopError):
+            guidance = (
+                "Fix the service stop failure, then retry the upgrade or run the "
+                "migrate-runtime-directory action."
+            )
+        else:
+            guidance = (
+                "Fix the reported filesystem issue, then run the migrate-runtime-directory action."
+            )
+        self.unit.status = ops.BlockedStatus(
+            f"Automatic runtime ownership migration failed: {error}. {guidance}"
+        )
+
+    def _is_automatic_runtime_migration_successful(
+        self, agent_service: service.JenkinsAgentService
+    ) -> bool:
+        """Repair known legacy runtime directories before an upgraded service starts."""
+        # UpgradeCharmEvent does not expose the previous charm revision. Unsafe
+        # runtime ownership is the observable legacy signature left by revision 265.
+        if agent_service.state.agent_user == "root":
+            return True
+        if agent_service.runtime_directories_usable():
+            return True
+
+        try:
+            if agent_service.is_running:
+                agent_service.reset()
+            home = agent_service.state.jenkins_home
+            self._validate_migration_directory(home, home, require_existing=False)
+            for name in service.RUNTIME_DIRECTORIES:
+                directory = home / name
+                try:
+                    directory.lstat()
+                except FileNotFoundError:
+                    continue
+                except OSError as exc:
+                    raise service.RuntimeDirectoryError(
+                        f"Unable to inspect runtime directory {directory}"
+                    ) from exc
+                self._validate_migration_directory(home, directory, require_existing=False)
+            agent_service.migrate_runtime_directories()
+        except (ValueError, service.RuntimeDirectoryError, service.ServiceStopError) as exc:
+            self._block_automatic_runtime_migration(exc)
+            return False
+        return True
+
+    def _reconcile(self, _: ops.EventBase, *, automatic_runtime_migration: bool = False) -> None:
         """Reconcile the agent to its desired state on every event.
 
         Raises:
@@ -152,9 +209,16 @@ class JenkinsAgentCharm(ops.CharmBase):
             try:
                 desired_service.reset()
             except service.ServiceStopError as exc:
+                if automatic_runtime_migration:
+                    self._block_automatic_runtime_migration(exc)
+                    return
                 raise RuntimeError("Error stopping the agent service") from exc
 
         service_files_changed = self._reconcile_installation(desired_service)
+        if automatic_runtime_migration and not self._is_automatic_runtime_migration_successful(
+            desired_service
+        ):
+            return
         self._reconcile_relation_data(desired_state)
         self._reconcile_service(
             desired_state, desired_service, service_files_changed=service_files_changed
