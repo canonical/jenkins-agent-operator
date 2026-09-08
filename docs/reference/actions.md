@@ -15,7 +15,9 @@ The action preserves paths and contents. It creates no archive, does not follow
 symlinks, and does not cross filesystem boundaries. Same-filesystem bind mounts
 are not detected; detach them or exclude them from the selected path first.
 
-Run it when the charm blocks on legacy runtime ownership:
+During an upgrade from a root-running revision, the charm also attempts to
+migrate known `remoting` and `workspace` trees. Run this action when the upgrade
+blocks because automatic migration cannot complete:
 
 ```bash
 juju run --wait=5m jenkins-agent/0 migrate-runtime-directory
