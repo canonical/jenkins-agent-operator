@@ -236,6 +236,7 @@ def jenkins_agent_application_fixture(
         # configuration against a real unit rather than only checking templates.
         config={
             "jenkins_agent_labels": "machine",
+            "jenkins_agent_executors": 2,
             "agent_user": JENKINS_AGENT_USER,
             "jenkins_home": JENKINS_AGENT_HOME,
         },
