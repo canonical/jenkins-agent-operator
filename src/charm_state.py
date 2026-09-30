@@ -159,8 +159,9 @@ class State:
             Current state of Jenkins agent.
         """
         try:
+            configured_executors = charm.model.config.get("jenkins_agent_executors", 0)
             agent_meta = AgentMeta(
-                executors=tools.parse_obj_as(int, os.cpu_count()),
+                executors=tools.parse_obj_as(int, configured_executors or os.cpu_count()),
                 labels=charm.model.config.get("jenkins_agent_labels", "") or os.uname().machine,
                 name=f"{charm.model.name}-{charm.unit.name.replace('/', '-')}",
             )

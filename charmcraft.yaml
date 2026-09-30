@@ -77,6 +77,12 @@ config:
       description: |
         Comma-separated list of labels to be assigned to the agent in Jenkins. If not set it will
         default to the agents hardware identifier, e.g.: 'x86_64'
+    jenkins_agent_executors:
+      type: int
+      default: 0
+      description: |
+        Number of executors available on the Jenkins agent. If set to 0, the number of CPU cores
+        on the machine is used.
     agent_user:
       type: string
       default: jenkins

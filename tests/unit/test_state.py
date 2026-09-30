@@ -30,6 +30,25 @@ def test_agent_meta_normalizes_comma_separated_labels_for_jenkins():
     assert metadata.as_dict()["labels"] == "ownership-upgrade,migration-test"
 
 
+def test_from_charm_uses_configured_executor_count(harness: ops.testing.Harness, service_mocks):
+    """Use the configured executor count instead of the host CPU count."""
+    harness.update_config({"jenkins_agent_executors": 3})
+    harness.begin()
+
+    assert charm_state.State.from_charm(harness.charm).agent_meta.executors == 3
+
+
+def test_from_charm_rejects_negative_configured_executor_count(
+    harness: ops.testing.Harness, service_mocks
+):
+    """Reject a negative executor count that cannot be used by Jenkins."""
+    harness.update_config({"jenkins_agent_executors": -1})
+    harness.begin()
+
+    with pytest.raises(charm_state.InvalidStateError, match=r"Invalid executor state\."):
+        charm_state.State.from_charm(harness.charm)
+
+
 def test_from_charm_invalid_metadata(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
 ):
