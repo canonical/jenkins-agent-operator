@@ -38,6 +38,17 @@ def test_from_charm_uses_configured_executor_count(harness: ops.testing.Harness,
     assert charm_state.State.from_charm(harness.charm).agent_meta.executors == 3
 
 
+def test_from_charm_uses_cpu_count_when_configured_executors_is_zero(
+    harness: ops.testing.Harness, service_mocks, monkeypatch: pytest.MonkeyPatch
+):
+    """Use the host CPU count when the executor config is zero."""
+    monkeypatch.setattr(os, "cpu_count", MagicMock(return_value=4))
+    harness.update_config({"jenkins_agent_executors": 0})
+    harness.begin()
+
+    assert charm_state.State.from_charm(harness.charm).agent_meta.executors == 4
+
+
 def test_from_charm_rejects_negative_configured_executor_count(
     harness: ops.testing.Harness, service_mocks
 ):
