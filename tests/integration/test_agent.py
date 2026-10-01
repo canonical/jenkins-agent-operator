@@ -30,6 +30,7 @@ from tenacity import (
 )
 
 from charm_state import DEFAULT_AGENT_USER
+from tests.integration import JENKINS_AGENT_EXECUTORS
 
 logger = logging.getLogger()
 
@@ -507,7 +508,9 @@ def assert_job_success(
     _run_job(job=job)
 
 
-def test_agent_relation(jenkins_client: jenkinsapi.jenkins.Jenkins, active_agent: str):
+def test_agent_relation(
+    jenkins_client: jenkinsapi.jenkins.Jenkins, active_agent: str, use_docker: bool
+):
     """
     arrange: given a Jenkins server client and the registered agent.
     act: when a job is created.
@@ -518,7 +521,10 @@ def test_agent_relation(jenkins_client: jenkinsapi.jenkins.Jenkins, active_agent
     assert len(agent_nodes) == 1, f"Expected one agent node, found {len(agent_nodes)}"
     agent_name = agent_nodes[0].name
     _configure_agent_remote_fs(jenkins_client, agent_name)
-    assert jenkins_client.get_node(agent_name).get_config_element("remoteFS") == JENKINS_AGENT_HOME
+    node = jenkins_client.get_node(agent_name)
+    assert node.get_config_element("remoteFS") == JENKINS_AGENT_HOME
+    if not use_docker:
+        assert node.poll(tree="numExecutors")["numExecutors"] == JENKINS_AGENT_EXECUTORS
     assert all(node.is_online() for node in jenkins_client.get_nodes().values())
 
     assert_job_success(

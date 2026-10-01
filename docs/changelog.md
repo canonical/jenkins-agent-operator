@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Each revision is versioned by the date of the revision.
 
+## 2026-09-30
+
+- Add the `jenkins_agent_executors` configuration option to customize the number of
+  executors advertised by each Jenkins agent; `0` keeps the CPU-count default.
+
 ## 2026-09-01
 
 - Install `agent.jar` and `.ready` through same-directory temporary files and
