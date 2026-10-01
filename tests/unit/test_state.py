@@ -6,7 +6,6 @@
 """Test for charm state."""
 
 import os
-from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import ops
@@ -14,9 +13,6 @@ import ops.testing
 import pytest
 
 import charm_state
-
-if TYPE_CHECKING:
-    from charm import JenkinsAgentCharm
 
 
 def test_agent_meta_normalizes_comma_separated_labels_for_jenkins():
@@ -30,50 +26,44 @@ def test_agent_meta_normalizes_comma_separated_labels_for_jenkins():
     assert metadata.as_dict()["labels"] == "ownership-upgrade,migration-test"
 
 
-def test_from_charm_uses_configured_executor_count(harness: ops.testing.Harness, service_mocks):
-    """Use the configured executor count instead of the host CPU count."""
-    harness.update_config({"jenkins_agent_executors": 3})
+@pytest.mark.parametrize(
+    ("configured_executors", "cpu_count", "expected"),
+    [(3, 8, 3), (0, 4, 4)],
+)
+def test_from_charm_uses_configured_or_cpu_count(
+    harness: ops.testing.Harness,
+    service_mocks,
+    monkeypatch: pytest.MonkeyPatch,
+    configured_executors: int,
+    cpu_count: int,
+    expected: int,
+):
+    """Use the configured count or fall back to the host CPU count for zero."""
+    monkeypatch.setattr(os, "cpu_count", MagicMock(return_value=cpu_count))
+    harness.update_config({"jenkins_agent_executors": configured_executors})
     harness.begin()
 
-    assert charm_state.State.from_charm(harness.charm).agent_meta.executors == 3
+    assert charm_state.State.from_charm(harness.charm).agent_meta.executors == expected
 
 
-def test_from_charm_uses_cpu_count_when_configured_executors_is_zero(
-    harness: ops.testing.Harness, service_mocks, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("config", "cpu_count"),
+    [({"jenkins_agent_executors": -1}, 8), ({}, 0)],
+)
+def test_from_charm_rejects_invalid_executor_count(
+    harness: ops.testing.Harness,
+    service_mocks,
+    monkeypatch: pytest.MonkeyPatch,
+    config: dict,
+    cpu_count: int,
 ):
-    """Use the host CPU count when the executor config is zero."""
-    monkeypatch.setattr(os, "cpu_count", MagicMock(return_value=4))
-    harness.update_config({"jenkins_agent_executors": 0})
-    harness.begin()
-
-    assert charm_state.State.from_charm(harness.charm).agent_meta.executors == 4
-
-
-def test_from_charm_rejects_negative_configured_executor_count(
-    harness: ops.testing.Harness, service_mocks
-):
-    """Reject a negative executor count that cannot be used by Jenkins."""
-    harness.update_config({"jenkins_agent_executors": -1})
+    """Reject configured or host executor counts that cannot be used by Jenkins."""
+    monkeypatch.setattr(os, "cpu_count", MagicMock(return_value=cpu_count))
+    harness.update_config(config)
     harness.begin()
 
     with pytest.raises(charm_state.InvalidStateError, match=r"Invalid executor state\."):
         charm_state.State.from_charm(harness.charm)
-
-
-def test_from_charm_invalid_metadata(
-    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch
-):
-    """
-    arrange: patched os.cpu_count method returning invalid number of executors.
-    act: when the charm is initialized.
-    assert: The charm goes into Error state.
-    """
-    monkeypatch.setattr(os, "cpu_count", MagicMock(return_value=0))
-    harness.begin()
-    charm: JenkinsAgentCharm = harness.charm
-
-    with pytest.raises(charm_state.InvalidStateError, match=r"Invalid executor state\."):
-        charm_state.State.from_charm(charm=charm)
 
 
 @pytest.mark.parametrize(
