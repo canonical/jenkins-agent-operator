@@ -17,6 +17,8 @@ import jenkinsapi
 import jubilant
 import pytest
 
+from tests.integration import JENKINS_AGENT_EXECUTORS
+
 logger = logging.getLogger(__name__)
 
 JENKINS_APPLICATION_NAME = "jenkins-k8s"
@@ -236,7 +238,7 @@ def jenkins_agent_application_fixture(
         # configuration against a real unit rather than only checking templates.
         config={
             "jenkins_agent_labels": "machine",
-            "jenkins_agent_executors": 2,
+            "jenkins_agent_executors": JENKINS_AGENT_EXECUTORS,
             "agent_user": JENKINS_AGENT_USER,
             "jenkins_home": JENKINS_AGENT_HOME,
         },

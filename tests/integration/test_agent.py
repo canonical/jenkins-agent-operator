@@ -30,6 +30,7 @@ from tenacity import (
 )
 
 from charm_state import DEFAULT_AGENT_USER
+from tests.integration import JENKINS_AGENT_EXECUTORS
 
 logger = logging.getLogger()
 
@@ -523,7 +524,7 @@ def test_agent_relation(
     node = jenkins_client.get_node(agent_name)
     assert node.get_config_element("remoteFS") == JENKINS_AGENT_HOME
     if not use_docker:
-        assert node.poll(tree="numExecutors")["numExecutors"] == 2
+        assert node.poll(tree="numExecutors")["numExecutors"] == JENKINS_AGENT_EXECUTORS
     assert all(node.is_online() for node in jenkins_client.get_nodes().values())
 
     assert_job_success(
