@@ -20,7 +20,7 @@ dependencies = [
   "opentelemetry-api==1.45.0",
   "ops==3.8.2",
   "pydantic==2.13.5",
-  "python-dotenv==1.2.3",
+  "python-dotenv==1.2.4",
   "requests==2.34.2",
 ]
 
