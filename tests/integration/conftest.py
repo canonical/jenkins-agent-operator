@@ -17,11 +17,23 @@ import jenkinsapi
 import jubilant
 import pytest
 
+from tests.integration import JENKINS_AGENT_EXECUTORS
+
 logger = logging.getLogger(__name__)
 
 JENKINS_APPLICATION_NAME = "jenkins-k8s"
 JENKINS_AGENT_APPLICATION_NAME = "jenkins-agent"
+JENKINS_AGENT_HOME = "/srv/jenkins-agent"
+JENKINS_AGENT_USER = "jenkins-agent-test"
 ANY_CHARM_APPLICATION_NAME = "any-charm"
+SECONDS_PER_MINUTE = 60
+JENKINS_DEPLOY_TIMEOUT = 25 * SECONDS_PER_MINUTE
+AGENT_DEPLOY_TIMEOUT = 20 * SECONDS_PER_MINUTE
+ANY_CHARM_DEPLOY_TIMEOUT = 15 * SECONDS_PER_MINUTE
+TRAEFIK_DEPLOY_TIMEOUT = 10 * SECONDS_PER_MINUTE
+INGRESS_DEPLOY_TIMEOUT = 5 * SECONDS_PER_MINUTE
+DOCKER_HEALTH_RETRIES = 10
+DOCKER_HEALTH_INTERVAL = 1
 
 
 @pytest.fixture(scope="module", name="charm")
@@ -105,7 +117,7 @@ def _get_juju_jenkins_server_password(juju: jubilant.Juju, application: str):
 def _deploy_jenkins_server_juju(agent_juju: jubilant.Juju, microk8s_juju: jubilant.Juju):
     """Deploy Jenkins k8s server as agent relation provider."""
     microk8s_juju.deploy(JENKINS_APPLICATION_NAME, channel="latest/edge")
-    microk8s_juju.wait(jubilant.all_active, timeout=60 * 25)
+    microk8s_juju.wait(jubilant.all_active, timeout=JENKINS_DEPLOY_TIMEOUT)
     unit_status = (
         microk8s_juju.status()
         .get_units(JENKINS_APPLICATION_NAME)
@@ -150,7 +162,6 @@ def _deploy_jenkins_server_docker():
         detach=True,
         ports={
             "8080": 8080,
-            "50000": 50000,
         },
         # Restart is required due to Jenkins requiring restart after plugin installation. When
         # Jenkins server exits, the Docker container will also exit.
@@ -162,9 +173,9 @@ def _deploy_jenkins_server_docker():
     attempt = 0
     while (
         run_result := container.exec_run(cmd=["curl", "--fail", "-v", "localhost:8080/health"])
-    ).exit_code != 0 and attempt < 10:
+    ).exit_code != 0 and attempt < DOCKER_HEALTH_RETRIES:
         attempt += 1
-        time.sleep(1)
+        time.sleep(DOCKER_HEALTH_INTERVAL)
     assert run_result.exit_code == 0, "Unable to run Jenkins server in Docker."
 
     # Required to successfully register agent
@@ -190,6 +201,11 @@ def jenkins_client_fixture(juju: jubilant.Juju, microk8s_juju: jubilant.Juju, us
     if not use_docker:
         logger.info("Deploying Jenkins server via Juju: %s", system_attribs.processor)
         server = _deploy_jenkins_server_juju(agent_juju=juju, microk8s_juju=microk8s_juju)
+        logger.info(
+            "Jenkins client endpoint: source=juju-unit host=%s port=%s",
+            server.address,
+            server.port,
+        )
         return jenkinsapi.jenkins.Jenkins(
             baseurl=f"http://{server.address}:{server.port}",
             username=server.username,
@@ -198,6 +214,11 @@ def jenkins_client_fixture(juju: jubilant.Juju, microk8s_juju: jubilant.Juju, us
 
     logger.info("Deploying Jenkins server via Docker: %s", system_attribs.processor)
     server = _deploy_jenkins_server_docker()
+    logger.info(
+        "Jenkins client endpoint: source=docker-host host=%s port=%s",
+        server.address,
+        server.port,
+    )
     client = jenkinsapi.jenkins.Jenkins(baseurl=f"http://{server.address}:{server.port}")
     client.safe_restart()
     return client
@@ -213,10 +234,17 @@ def jenkins_agent_application_fixture(
         app=JENKINS_AGENT_APPLICATION_NAME,
         num_units=1,
         base=request.param,
-        config={"jenkins_agent_labels": "machine"},
+        # Use non-default values so the integration suite exercises the user/home
+        # configuration against a real unit rather than only checking templates.
+        config={
+            "jenkins_agent_labels": "machine",
+            "jenkins_agent_executors": JENKINS_AGENT_EXECUTORS,
+            "agent_user": JENKINS_AGENT_USER,
+            "jenkins_home": JENKINS_AGENT_HOME,
+        },
         constraints={"arch": arch},
     )
-    juju.wait(jubilant.all_agents_idle, timeout=60 * 20)
+    juju.wait(jubilant.all_agents_idle, timeout=AGENT_DEPLOY_TIMEOUT)
     return JENKINS_AGENT_APPLICATION_NAME
 
 
@@ -230,7 +258,7 @@ def _register_agent_node(jenkins_client: jenkinsapi.jenkins.Jenkins, model_name:
     agent_node_meta = {
         "num_executors": 1,
         "node_description": "Test JNLP Node on Docker",
-        "remote_fs": "/var/lib/jenkins",
+        "remote_fs": JENKINS_AGENT_HOME,
         "labels": "machine",
         "exclusive": True,
     }
@@ -243,15 +271,12 @@ def _register_agent_node(jenkins_client: jenkinsapi.jenkins.Jenkins, model_name:
     return secret
 
 
-def _generate_any_charm_src_overwrite(
-    jenkins_server_url: str, agent_node_secret: str, model_name: str
-):
+def _generate_any_charm_src_overwrite(jenkins_server_url: str, agent_node_secret: str):
     """Generate any charm src.
 
     Args:
         jenkins_server_url: URL of the Jenkins server.
         agent_node_secret: Secret token for the agent node.
-        model_name: Juju model name (used for context, agent name comes from relation data).
     """
     return {
         "any_charm.py": textwrap.dedent(
@@ -308,11 +333,66 @@ def jenkins_agent_requirer_fixture(
                 _generate_any_charm_src_overwrite(
                     jenkins_server_url=jenkins_client.base_server_url(),
                     agent_node_secret=agent_secret,
-                    model_name=model_name,
                 )
             )
         },
         constraints={"arch": arch},
     )
-    juju.wait(jubilant.all_agents_idle, timeout=60 * 15)
+    juju.wait(jubilant.all_agents_idle, timeout=ANY_CHARM_DEPLOY_TIMEOUT)
     return ANY_CHARM_APPLICATION_NAME
+
+
+@pytest.fixture(scope="module", name="traefik_k8s_application")
+def traefik_k8s_application_fixture(use_docker: bool, microk8s_juju: jubilant.Juju):
+    """Deploy traefik-k8s charm on microk8s controller.
+
+    This fixture is only used for amd64 integration tests. Non-amd64 architectures
+    (arm64, s390x, ppc64le) run with --use-docker flag and skip Traefik deployment
+    to avoid microk8s setup issues.
+
+    Returns:
+        The traefik-k8s application name, or skips the test if using Docker.
+    """
+    if use_docker:
+        # Traefik ingress test is not supported with Docker Jenkins deployment
+        pytest.skip("Traefik ingress test requires Juju-deployed Jenkins server")
+
+    logger.info("Deploying traefik-k8s for ingress testing...")
+    microk8s_juju.deploy(
+        "traefik-k8s",
+        app="traefik-k8s",
+        channel="latest/stable",
+        trust=True,
+    )
+    microk8s_juju.wait(jubilant.all_active, timeout=TRAEFIK_DEPLOY_TIMEOUT)
+    logger.info("traefik-k8s deployed successfully")
+    return "traefik-k8s"
+
+
+@pytest.fixture(scope="module", name="ingressed_jenkins_server")
+def ingressed_jenkins_server_fixture(
+    jenkins_client: jenkinsapi.jenkins.Jenkins,
+    traefik_k8s_application: str,
+    microk8s_juju: jubilant.Juju,
+):
+    """Jenkins server with traefik ingress configured.
+
+    Integrates jenkins-k8s with traefik-k8s to provide HTTP-only ingress access,
+    which is the scenario that requires -webSocket flag (issue #165).
+
+    Returns:
+        The jenkins-k8s application name with traefik ingress configured.
+    """
+    if not traefik_k8s_application:
+        # Should not reach here due to skip in traefik_k8s_application fixture
+        pytest.skip("Traefik not deployed")
+
+    logger.info("Configuring traefik ingress for jenkins-k8s...")
+    # Integrate jenkins-k8s:ingress with traefik-k8s:ingress for HTTP ingress
+    # Note: jenkins-k8s has multiple ingress endpoints, we use the main 'ingress' endpoint
+    microk8s_juju.integrate(
+        f"{JENKINS_APPLICATION_NAME}:ingress", f"{traefik_k8s_application}:ingress"
+    )
+    microk8s_juju.wait(jubilant.all_active, timeout=INGRESS_DEPLOY_TIMEOUT)
+    logger.info("Traefik ingress configured for jenkins-k8s")
+    return JENKINS_APPLICATION_NAME

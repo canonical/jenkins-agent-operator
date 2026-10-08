@@ -3,11 +3,13 @@
 """Fixtures for jenkins-agent charm tests."""
 
 import secrets
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 from ops.testing import Harness
 
+import service
 from charm import JenkinsAgentCharm
 from charm_state import AGENT_RELATION
 
@@ -24,7 +26,8 @@ def service_configuration_template_fixture(agent_relation_data: dict) -> str:
     return f'''[Service]
 Environment="JENKINS_TOKEN={agent_relation_data.get("test-model-jenkins-agent-0_secret")}"
 Environment="JENKINS_URL={agent_relation_data.get("url")}"
-Environment="JENKINS_AGENT=test-model-jenkins-agent-0"'''
+Environment="JENKINS_AGENT=test-model-jenkins-agent-0"
+Environment="JENKINS_HOME=/var/lib/jenkins"'''
 
 
 @pytest.fixture(autouse=True)
@@ -35,6 +38,47 @@ def mock_os_release():
         return_value={"UBUNTU_CODENAME": "noble"},
     ):
         yield
+
+
+@pytest.fixture(name="service_mocks")
+def service_mocks_fixture(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    """Patch JenkinsAgentService side-effects so reconcile runs without a host.
+
+    Defaults: install is a no-op, service inactive, credentials changed. Individual
+    tests override any attribute (e.g. is_ready) as needed.
+    """
+    mocks = SimpleNamespace(
+        install=MagicMock(return_value=False),
+        restart=MagicMock(),
+        is_running=PropertyMock(return_value=False),
+        reset=MagicMock(),
+        reset_failed_state=MagicMock(),
+        credentials_changed=MagicMock(return_value=True),
+        runtime_directories_usable=MagicMock(return_value=True),
+        migrate_runtime_directories=MagicMock(),
+    )
+    monkeypatch.setattr(service.JenkinsAgentService, "is_ready", PropertyMock(return_value=False))
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "is_running", PropertyMock(return_value=False)
+    )
+    monkeypatch.setattr(service.JenkinsAgentService, "install", mocks.install)
+    monkeypatch.setattr(service.JenkinsAgentService, "restart", mocks.restart)
+    monkeypatch.setattr(service.JenkinsAgentService, "reset", mocks.reset)
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "reset_failed_state", mocks.reset_failed_state
+    )
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "credentials_changed", mocks.credentials_changed
+    )
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "runtime_directories_usable", mocks.runtime_directories_usable
+    )
+    monkeypatch.setattr(
+        service.JenkinsAgentService,
+        "migrate_runtime_directories",
+        mocks.migrate_runtime_directories,
+    )
+    return mocks
 
 
 @pytest.fixture(scope="function", name="harness")

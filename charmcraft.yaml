@@ -43,6 +43,22 @@ parts:
     organize:
       "*": "templates/"
 
+actions:
+  migrate-runtime-directory:
+    description: >
+      Recursively update ownership and owner permissions for a Jenkins directory.
+      The target user is the configured agent_user and the directory defaults to
+      jenkins_home. An active agent service is stopped before migration and restored
+      after a successful migration.
+    params:
+      directory:
+        type: string
+        default: ""
+        description: >
+          Existing directory under the configured jenkins_home to migrate. Leave empty
+          to migrate the complete configured Jenkins home.
+    additionalProperties: false
+
 platforms:
   ubuntu@24.04:amd64:
   ubuntu@22.04:amd64:
@@ -61,6 +77,36 @@ config:
       description: |
         Comma-separated list of labels to be assigned to the agent in Jenkins. If not set it will
         default to the agents hardware identifier, e.g.: 'x86_64'
+    jenkins_agent_executors:
+      type: int
+      default: 0
+      description: |
+        Number of executors available on the Jenkins agent. If set to 0, the number of CPU cores
+        on the machine is used.
+    agent_user:
+      type: string
+      default: jenkins
+      description: |
+        OS user that runs the Jenkins agent systemd service. Defaults to jenkins.
+        The charm ensures the user exists, owns JENKINS_HOME, and is granted
+        passwordless sudo. Note that the systemd unit file itself is always owned
+        by root.
+    jenkins_home:
+      type: string
+      default: ""
+      description: |
+        Home directory for the Jenkins agent, passed to the agent as -workDir and
+        used as the working directory by the systemd service. If unset, the agent
+        uses /var/lib/jenkins locally and does not manage the Jenkins node remoteFS.
+    websocket_mode:
+      type: boolean
+      default: true
+      description: |
+        Enable WebSocket mode for agent connection. When enabled, the agent connects to Jenkins
+        over HTTP/HTTPS using WebSocket protocol instead of requiring direct TCP access to port
+        50000. This is required when using HTTP-only ingress (e.g., traefik-k8s) and is the
+        recommended mode for most deployments. Disable only if Jenkins server has direct TCP port
+        50000 accessibility and you need JNLP4 protocol instead of WebSocket.
 
 provides:
   agent:

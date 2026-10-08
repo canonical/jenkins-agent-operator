@@ -1,0 +1,13 @@
+#!/bin/bash
+# Copyright 2026 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+set -eu
+destination="${!#}"
+case "$destination" in
+    */remoting|*/workspace)
+        echo "simulated runtime mkdir failure" >&2
+        exit 1
+        ;;
+esac
+exec /bin/mkdir "$@"

@@ -8,14 +8,24 @@
 
 # Jenkins machine agent charm is deployed on lxd and Jenkins-k8s server charm is deployed on
 # microk8s.
-sg snap_microk8s -c "microk8s enable storage"
-sg snap_microk8s -c "microk8s status --wait-ready"
+
+# Export microk8s config for integration tests
+sudo microk8s config | sudo tee "${GITHUB_WORKSPACE}/kube-config" > /dev/null
+
+sudo microk8s enable storage
+# Enable MetalLB for LoadBalancer service support (required by traefik-k8s)
+# Use a local IP range that won't conflict with the host network
+sudo microk8s enable metallb:10.64.140.43-10.64.140.49
+# Restart metallb - metallb can be flaky and stop setup midway
+sudo microk8s disable metallb
+sudo microk8s enable metallb:10.64.140.43-10.64.140.49
+sudo microk8s status --wait-ready
 # lxd should be installed and inited by a previous step in integration test action.
 echo "bootstrapping lxd juju controller"
-sg snap_microk8s -c "juju bootstrap localhost localhost"
+sg snap_microk8s -c "juju bootstrap localhost localhost --debug"
 
 echo "bootstrapping secondary microk8s controller"
-sg snap_microk8s -c "juju bootstrap microk8s microk8s"
+sg snap_microk8s -c "juju bootstrap microk8s microk8s --debug"
 
 echo "Switching to testing model"
 sg snap_microk8s -c "juju switch localhost"

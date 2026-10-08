@@ -1,0 +1,10 @@
+#!/bin/bash
+# Copyright 2026 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+set -eu
+[ "$1" = "-jar" ]
+[ -f "$2" ]
+[ "$(cat -- "$2")" = "new-agent" ]
+[ -f "$JENKINS_HOME/.ready" ]
+touch -- "$FAKE_JAVA_CALLED"

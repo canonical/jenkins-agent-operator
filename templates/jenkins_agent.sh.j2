@@ -1,0 +1,158 @@
+#!/bin/bash
+
+# Copyright 2025 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+err() {
+  echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*" >&2
+}
+
+info() {
+   echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*"
+}
+
+set -eu -o pipefail
+
+export LC_ALL=C
+export TERM=xterm
+
+JENKINS_HOME="${JENKINS_HOME:-{{ jenkins_home|default('/var/lib/jenkins', true) }}}"
+
+info "Installing on arch: $(uname -m)"
+
+if ! mkdir -p -- "$JENKINS_HOME"; then
+    err "Error initializing the agent's home directory"
+    exit 1
+fi
+cd -- "$JENKINS_HOME"
+
+CONFIG_MISSING=false
+if [ -z ${JENKINS_URL+x} ]; then
+    CONFIG_MISSING=true
+    err "JENKINS_URL needs to be configured"
+fi
+if [ -z ${JENKINS_AGENT+x} ]; then
+    CONFIG_MISSING=true
+    err "JENKINS_AGENT needs to be configured"
+fi
+if [ -z ${JENKINS_TOKEN+x} ]; then
+    CONFIG_MISSING=true
+    err "JENKINS_TOKEN needs to be configured"
+fi
+
+if [ "$CONFIG_MISSING" == true ]; then
+    err "Invalid configuration, missing value(s)"
+    exit 1
+fi
+
+TEMPORARY_FILE=""
+cleanup_temporary_file() {
+    if [ -n "$TEMPORARY_FILE" ]; then
+        rm -f -- "$TEMPORARY_FILE"
+    fi
+}
+
+install_agent_jar() {
+    local agent_jar="${JENKINS_HOME}/agent.jar"
+
+    if ! TEMPORARY_FILE="$(mktemp -- "${JENKINS_HOME}/.agent.jar.XXXXXX")"; then
+        err "Unable to create a temporary file for the agent binary"
+        return 1
+    fi
+    trap cleanup_temporary_file EXIT
+
+    info "Fetching the agent binary"
+    if ! curl --fail --connect-timeout 1200 "${JENKINS_URL}/jnlpJars/agent.jar" -o "$TEMPORARY_FILE"; then
+        err "Unable to download agent binary"
+        return 1
+    fi
+    if ! mv -fT -- "$TEMPORARY_FILE" "$agent_jar"; then
+        err "Unable to install agent binary"
+        return 1
+    fi
+    TEMPORARY_FILE=""
+    trap - EXIT
+}
+
+if ! install_agent_jar; then
+    exit 1
+fi
+
+write_ready_marker() {
+    local ready_marker="${JENKINS_HOME}/.ready"
+
+    if ! TEMPORARY_FILE="$(mktemp -- "${JENKINS_HOME}/.ready.XXXXXX")"; then
+        err "Unable to create a temporary readiness marker"
+        return 1
+    fi
+    trap cleanup_temporary_file EXIT
+
+    if ! mv -fT -- "$TEMPORARY_FILE" "$ready_marker"; then
+        err "Unable to install readiness marker"
+        return 1
+    fi
+    TEMPORARY_FILE=""
+    trap - EXIT
+}
+
+prepare_runtime_directory() {
+    local name="$1"
+    local runtime_path="${JENKINS_HOME}/${name}"
+
+    if [ ! -e "$runtime_path" ] && [ ! -L "$runtime_path" ]; then
+        if ! mkdir --mode=0750 -- "$runtime_path"; then
+            err "Unable to create a writable ${name} directory"
+            return 1
+        fi
+        return 0
+    fi
+    # Keep this predicate in sync with JenkinsAgentService.runtime_directories_usable.
+    # systemd can start the service before a Juju reconcile, so the launcher must
+    # fail closed if an existing legacy tree was not migrated first.
+    if [ -L "$runtime_path" ]; then
+        err "${name} directory is a symbolic link; replace manually before retrying"
+        return 1
+    fi
+    if [ ! -d "$runtime_path" ]; then
+        err "${name} directory is not a directory; replace manually before retrying"
+        return 1
+    fi
+    if [ ! -O "$runtime_path" ] || [ ! -G "$runtime_path" ] || \
+       [ ! -r "$runtime_path" ] || [ ! -w "$runtime_path" ] || \
+       [ ! -x "$runtime_path" ]; then
+        err "${name} directory lacks owner access or group ownership; run migrate-runtime-directory"
+        return 1
+    fi
+    return 0
+}
+
+if ! prepare_runtime_directory remoting; then
+    exit 1
+fi
+if ! prepare_runtime_directory workspace; then
+    exit 1
+fi
+
+# Specify the agent as ready
+if ! write_ready_marker; then
+    exit 1
+fi
+
+info "Connecting to jenkins"
+# Launch the Jenkins agent with the following flags:
+#   -url: Jenkins server URL (e.g., http://jenkins.example.com:8080)
+#   -name: Agent node name for identification in Jenkins
+#   -workDir: Working directory for agent (JENKINS_HOME)
+#   -noReconnect: Do not attempt to reconnect if connection fails
+#   -secret: Agent authentication token provided by Jenkins server
+#   -websocket: Tunnel remoting protocol over WebSocket (HTTP) instead of TCP:50000.
+#     This enables agents to work through HTTP-only reverse proxies (traefik, HAProxy, nginx).
+#     Required for deployments where Jenkins is behind ingress that doesn't expose port 50000.
+#     WebSocket support has been stable since Jenkins 2.229 (2020) and works in all scenarios.
+#     See: https://www.jenkins.io/blog/2020/02/02/web-socket/
+if ! java -jar "${JENKINS_HOME}/agent.jar" -url "${JENKINS_URL}" -name "${JENKINS_AGENT}" -workDir "${JENKINS_HOME}" -noReconnect -secret "${JENKINS_TOKEN}"{% if websocket_mode %} -webSocket{% endif %}; then
+    err "Error connecting to jenkins"
+    # Remove ready mark if unsuccessful
+    rm -- "${JENKINS_HOME}/.ready"
+    exit 1
+fi

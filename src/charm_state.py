@@ -5,8 +5,10 @@
 
 import logging
 import os
+import re
 import typing
 from dataclasses import dataclass
+from pathlib import Path
 
 import ops
 from dotenv import dotenv_values
@@ -15,8 +17,11 @@ from typing_extensions import Literal
 
 # agent relation name
 AGENT_RELATION = "agent"
+DEFAULT_AGENT_USER = "jenkins"
 
 logger = logging.getLogger()
+_AGENT_USER_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]{0,31}\$?$")
+_JENKINS_HOME_PATTERN = re.compile(r"^/[A-Za-z0-9._/-]+$")
 
 
 class Credentials(BaseModel):
@@ -38,11 +43,13 @@ class AgentMeta(BaseModel):
         executors: The number of executors available on the unit.
         labels: The comma separated labels to assign to the agent.
         name: The name of the agent.
+        remote_fs: The workspace root Jenkins should use on the agent.
     """
 
     labels: str
     name: str
     executors: int = Field(..., ge=1)
+    remote_fs: typing.Optional[str] = None
 
     def as_dict(self) -> typing.Dict[str, str]:
         """Return dictionary representation of agent metadata.
@@ -50,11 +57,14 @@ class AgentMeta(BaseModel):
         Returns:
             A dictionary adhering to jenkins_agent_v0 interface.
         """
-        return {
+        metadata = {
             "executors": str(self.executors),
             "labels": self.labels,
             "name": self.name,
         }
+        if self.remote_fs is not None:
+            metadata["remote_fs"] = self.remote_fs
+        return metadata
 
 
 class UnitData(BaseModel):
@@ -123,13 +133,17 @@ class State:
         agent_relation_credentials: The full set of credentials from the agent relation. None if
             partial data is set or the credentials do not belong to current agent.
         unit_data: Data about the current unit.
+        websocket_mode: Whether to use WebSocket mode for agent connection.
         jenkins_agent_service_name: The Jenkins agent workload container name.
     """
 
     agent_meta: AgentMeta
     agent_relation_credentials: typing.Optional[Credentials]
     unit_data: UnitData
+    websocket_mode: bool
     jenkins_agent_service_name: str = "jenkins-agent"
+    agent_user: str = DEFAULT_AGENT_USER
+    jenkins_home: Path = Path("/var/lib/jenkins")
 
     @classmethod
     def from_charm(cls, charm: ops.CharmBase) -> "State":
@@ -145,8 +159,9 @@ class State:
             Current state of Jenkins agent.
         """
         try:
+            configured_executors = charm.model.config.get("jenkins_agent_executors", 0)
             agent_meta = AgentMeta(
-                executors=tools.parse_obj_as(int, os.cpu_count()),
+                executors=tools.parse_obj_as(int, configured_executors or os.cpu_count()),
                 labels=charm.model.config.get("jenkins_agent_labels", "") or os.uname().machine,
                 name=f"{charm.model.name}-{charm.unit.name.replace('/', '-')}",
             )
@@ -172,8 +187,32 @@ class State:
             logging.error("Unsupported series, %s: %s", unit_series, exc)
             raise InvalidStateError("Unsupported series.") from exc
 
+        # Get websocket_mode config
+        websocket_mode = bool(charm.model.config.get("websocket_mode", True))
+
+        # Get user/home config
+        agent_user = str(
+            charm.model.config.get("agent_user", DEFAULT_AGENT_USER) or DEFAULT_AGENT_USER
+        )
+        configured_home = str(charm.model.config.get("jenkins_home", "") or "")
+        jenkins_home = Path(configured_home or "/var/lib/jenkins")
+        if (
+            not _AGENT_USER_PATTERN.fullmatch(agent_user)
+            or not _JENKINS_HOME_PATTERN.fullmatch(str(jenkins_home))
+            or jenkins_home == Path("/")
+            or ".." in jenkins_home.parts
+        ):
+            raise InvalidStateError("Invalid agent configuration.")
+
+        agent_meta = agent_meta.model_copy(
+            update={"remote_fs": str(jenkins_home) if configured_home else None}
+        )
+
         return cls(
             agent_meta=agent_meta,
             agent_relation_credentials=agent_relation_credentials,
             unit_data=unit_data,
+            websocket_mode=websocket_mode,
+            agent_user=agent_user,
+            jenkins_home=jenkins_home,
         )
