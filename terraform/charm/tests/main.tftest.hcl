@@ -22,7 +22,7 @@ run "basic_deploy" {
   }
 
   assert {
-    condition     = output.provides.value.endpoint == "agent"
-    error_message = "jenkins-agent module should provide 'provides.value' output"
+    condition     = output.provides.agent.endpoint == "agent"
+    error_message = "jenkins-agent module should provide 'provides.agent' output"
   }
 }
