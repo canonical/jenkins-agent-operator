@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Each revision is versioned by the date of the revision.
 
+## 2026-10-14
+
+- Add a CC008-compliant Terraform charm module at `terraform/charm`, wired to
+  the `canonical/operator-workflows` Terraform test, compliance, release and
+  documentation generation workflows.
+
 ## 2026-09-30
 
 - Add the `jenkins_agent_executors` configuration option to customize the number of
