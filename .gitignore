@@ -33,3 +33,7 @@ stage/
 .hermes
 docs/plans/
 docs/superpowers/
+
+# Terraform
+**/.terraform/
+**/.terraform.lock.hcl

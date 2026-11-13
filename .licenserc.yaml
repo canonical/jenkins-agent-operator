@@ -36,4 +36,5 @@ header:
   - 'templates/Jenkinsfile'
   - 'templates/jenkins_agent.service'
   - 'uv.lock'
+  - '**/MAJOR_VERSION'
   comment: on-failure
