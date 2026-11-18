@@ -3,8 +3,9 @@
 # See LICENSE file for licensing details.
 
 set -eu
-[ "$1" = "-jar" ]
-[ -f "$2" ]
-[ "$(cat -- "$2")" = "new-agent" ]
+[ "$1" = "-XX:-UseBASE64Intrinsics" ]
+[ "$2" = "-jar" ]
+[ -f "$3" ]
+[ "$(cat -- "$3")" = "new-agent" ]
 [ -f "$JENKINS_HOME/.ready" ]
 touch -- "$FAKE_JAVA_CALLED"
