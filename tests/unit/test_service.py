@@ -88,9 +88,22 @@ def _mock_install_host(
     monkeypatch.setattr(systemd, "daemon_reload", daemon_reload)
     monkeypatch.setattr(systemd, "service_enable", service_enable)
     from_installed = (
-        MagicMock() if package_installed else MagicMock(side_effect=apt.PackageNotFoundError)
+        MagicMock(return_value=SimpleNamespace(version=apt.Version("21.0.13.1+2-1~24.04.1", "")))
+        if package_installed
+        else MagicMock(side_effect=apt.PackageNotFoundError)
     )
     monkeypatch.setattr(apt.DebianPackage, "from_installed_package", from_installed)
+    monkeypatch.setattr(
+        apt.DebianPackage,
+        "from_apt_cache",
+        MagicMock(
+            return_value=SimpleNamespace(
+                version=apt.Version("21.0.13.1+2-1~24.04.1", ""),
+                ensure=MagicMock(),
+            )
+        ),
+    )
+    monkeypatch.setattr(apt, "update", MagicMock())
     monkeypatch.setattr(apt, "add_package", MagicMock())
     _make_fake_useradd(monkeypatch)
     return SimpleNamespace(
@@ -147,6 +160,25 @@ def test_on_install(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatc
     assert host.service_enable.call_count >= 1
 
     assert harness.charm.unit.status.name == ops.BlockedStatus.name
+
+
+def test_install_upgrades_jdk_when_requested(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Upgrade the JDK candidate and report that the service needs a restart."""
+    _mock_install_host(monkeypatch, tmp_path, package_installed=True)
+    installed = SimpleNamespace(version=apt.Version("21.0.13+9-1", ""))
+    candidate = SimpleNamespace(
+        version=apt.Version("21.0.13.1+2-1~24.04.1", ""), ensure=MagicMock()
+    )
+    monkeypatch.setattr(
+        apt.DebianPackage, "from_installed_package", MagicMock(return_value=installed)
+    )
+    monkeypatch.setattr(apt.DebianPackage, "from_apt_cache", MagicMock(return_value=candidate))
+
+    _begin_with_lazy_service(harness)
+    assert _service(harness).install(upgrade_packages=True)
+    candidate.ensure.assert_called_once_with(apt.PackageState.Latest)
 
 
 def test_install_skips_apt_when_package_present(

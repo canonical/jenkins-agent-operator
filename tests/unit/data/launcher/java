@@ -3,9 +3,18 @@
 # See LICENSE file for licensing details.
 
 set -eu
-[ "$1" = "-XX:-UseBASE64Intrinsics" ]
-[ "$2" = "-jar" ]
-[ -f "$3" ]
-[ "$(cat -- "$3")" = "new-agent" ]
+if [ "$1" = "-XX:-UseBASE64Intrinsics" ] && [ "$2" = "-version" ]; then
+    [ "${FAKE_JAVA_REJECT_MITIGATION:-false}" != "true" ]
+    exit 0
+fi
+if [ "$1" = "-XX:-UseBASE64Intrinsics" ]; then
+    [ "$2" = "-jar" ]
+    agent_jar="$3"
+else
+    [ "$1" = "-jar" ]
+    agent_jar="$2"
+fi
+[ -f "$agent_jar" ]
+[ "$(cat -- "$agent_jar")" = "new-agent" ]
 [ -f "$JENKINS_HOME/.ready" ]
 touch -- "$FAKE_JAVA_CALLED"

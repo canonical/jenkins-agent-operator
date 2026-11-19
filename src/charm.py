@@ -191,7 +191,12 @@ class JenkinsAgentCharm(ops.CharmBase):
             return False
         return True
 
-    def _reconcile(self, _: ops.EventBase, *, automatic_runtime_migration: bool = False) -> None:
+    def _reconcile(
+        self,
+        event: ops.EventBase,
+        *,
+        automatic_runtime_migration: bool = False,
+    ) -> None:
         """Reconcile the agent to its desired state on every event.
 
         Raises:
@@ -214,7 +219,10 @@ class JenkinsAgentCharm(ops.CharmBase):
                     return
                 raise RuntimeError("Error stopping the agent service") from exc
 
-        service_files_changed = self._reconcile_installation(desired_service)
+        upgrade_packages = isinstance(event, (ops.InstallEvent, ops.UpgradeCharmEvent))
+        service_files_changed = self._reconcile_installation(
+            desired_service, upgrade_packages=upgrade_packages
+        )
         if automatic_runtime_migration and not self._is_automatic_runtime_migration_successful(
             desired_service
         ):
@@ -224,11 +232,14 @@ class JenkinsAgentCharm(ops.CharmBase):
             desired_state, desired_service, service_files_changed=service_files_changed
         )
 
-    def _reconcile_installation(self, agent_service: service.JenkinsAgentService) -> bool:
+    def _reconcile_installation(
+        self, agent_service: service.JenkinsAgentService, *, upgrade_packages: bool = False
+    ) -> bool:
         """Ensure the agent package and service files are installed and current.
 
         Args:
             agent_service: The service built from the current desired state.
+            upgrade_packages: Whether package upgrades are allowed for this event.
 
         Returns:
             Whether rendered service files changed and require a restart.
@@ -237,7 +248,7 @@ class JenkinsAgentCharm(ops.CharmBase):
             RuntimeError: when the installation of the agent service fails.
         """
         try:
-            return agent_service.install()
+            return agent_service.install(upgrade_packages=upgrade_packages)
         except service.PackageInstallError as exc:
             logger.error("Error installing the agent service %s", exc)
             raise RuntimeError("Error installing the agent service") from exc

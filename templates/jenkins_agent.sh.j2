@@ -151,7 +151,13 @@ info "Connecting to jenkins"
 #     WebSocket support has been stable since Jenkins 2.229 (2020) and works in all scenarios.
 #     See: https://www.jenkins.io/blog/2020/02/02/web-socket/
 # Temporary mitigation for CVE-2026-114938; remove after the fixed JDK ships.
-if ! java -XX:-UseBASE64Intrinsics -jar "${JENKINS_HOME}/agent.jar" -url "${JENKINS_URL}" -name "${JENKINS_AGENT}" -workDir "${JENKINS_HOME}" -noReconnect -secret "${JENKINS_TOKEN}"{% if websocket_mode %} -webSocket{% endif %}; then
+JAVA_MITIGATION_OPTS=()
+if java -XX:-UseBASE64Intrinsics -version >/dev/null 2>&1; then
+    JAVA_MITIGATION_OPTS=(-XX:-UseBASE64Intrinsics)
+else
+    info "JVM does not accept the Base64 mitigation flag; relying on the patched JDK"
+fi
+if ! java "${JAVA_MITIGATION_OPTS[@]}" -jar "${JENKINS_HOME}/agent.jar" -url "${JENKINS_URL}" -name "${JENKINS_AGENT}" -workDir "${JENKINS_HOME}" -noReconnect -secret "${JENKINS_TOKEN}"{% if websocket_mode %} -webSocket{% endif %}; then
     err "Error connecting to jenkins"
     # Remove ready mark if unsuccessful
     rm -- "${JENKINS_HOME}/.ready"

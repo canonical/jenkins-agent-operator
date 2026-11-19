@@ -307,7 +307,20 @@ class JenkinsAgentService:
                 return False
         return True
 
-    def install(self) -> bool:
+    def _upgrade_packages(self) -> bool:
+        """Upgrade the Jenkins agent JDK when a newer archive version exists."""
+        try:
+            apt.update()
+            installed = apt.DebianPackage.from_installed_package("openjdk-21-jre")
+            candidate = apt.DebianPackage.from_apt_cache("openjdk-21-jre")
+            if candidate.version <= installed.version:
+                return False
+            candidate.ensure(apt.PackageState.Latest)
+        except (apt.PackageError, apt.PackageNotFoundError) as exc:
+            raise PackageInstallError("Error upgrading the Jenkins agent JDK") from exc
+        return True
+
+    def install(self, *, upgrade_packages: bool = False) -> bool:
         """Converge the agent service files and required packages to desired state.
 
         Idempotent and safe to run on every reconcile: the systemd unit and launch
@@ -322,11 +335,15 @@ class JenkinsAgentService:
             PackageInstallError: if enabling the service or installing a package
                 failed.
         """
+        package_changed = False
         if not self._required_packages_installed():
             try:
                 apt.add_package(REQUIRED_PACKAGES, update_cache=True)
             except (apt.PackageError, apt.PackageNotFoundError) as exc:
                 raise PackageInstallError("Error installing the required packages") from exc
+            package_changed = True
+        elif upgrade_packages:
+            package_changed = self._upgrade_packages()
 
         self._ensure_user_and_home()
         unit_file_changed = self._sync_service_files()
@@ -338,7 +355,7 @@ class JenkinsAgentService:
                 systemd.service_enable(AGENT_SERVICE_NAME)
             except systemd.SystemdError as exc:
                 raise PackageInstallError("Error enabling the agent service") from exc
-        return unit_file_changed
+        return package_changed or unit_file_changed
 
     def _ensure_user_and_home(self) -> None:
         """Ensure the configured agent user exists, owns the home, and can sudo.
