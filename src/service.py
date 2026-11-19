@@ -23,7 +23,8 @@ from charm_state import Credentials, State
 
 logger = logging.getLogger(__name__)
 AGENT_SERVICE_NAME = "jenkins-agent"
-REQUIRED_PACKAGES = ["openjdk-21-jre", "sudo"]
+JDK_PACKAGES = ("openjdk-21-jre", "openjdk-21-jre-headless")
+REQUIRED_PACKAGES = [JDK_PACKAGES[0], "sudo"]
 SYSTEMD_SERVICE_CONF_DIR = "/etc/systemd/system/jenkins-agent.service.d/"
 STARTUP_CHECK_TIMEOUT = 30
 STARTUP_CHECK_INTERVAL = 2
@@ -307,26 +308,47 @@ class JenkinsAgentService:
                 return False
         return True
 
+    def _installed_jdk_versions(self) -> dict[str, apt.Version]:
+        """Return installed versions for the JDK packages that provide the JVM."""
+        versions = {}
+        for package in JDK_PACKAGES:
+            try:
+                versions[package] = apt.DebianPackage.from_installed_package(package).version
+            except apt.PackageNotFoundError:
+                continue
+        return versions
+
     def _upgrade_packages(self) -> bool:
-        """Upgrade the Jenkins agent JDK when a newer archive version exists."""
+        """Upgrade the Jenkins agent JDK without pinning an apt-cache stanza."""
+        before = self._installed_jdk_versions()
         try:
             apt.update()
-            installed = apt.DebianPackage.from_installed_package("openjdk-21-jre")
-            candidate = apt.DebianPackage.from_apt_cache("openjdk-21-jre")
-            if candidate.version <= installed.version:
-                return False
-            candidate.ensure(apt.PackageState.Latest)
-        except (apt.PackageError, apt.PackageNotFoundError) as exc:
-            raise PackageInstallError("Error upgrading the Jenkins agent JDK") from exc
-        return True
+            subprocess.run(
+                [
+                    "/usr/bin/apt-get",
+                    "-y",
+                    "--only-upgrade",
+                    "-o",
+                    "Dpkg::Options::=--force-confold",
+                    "install",
+                    *JDK_PACKAGES,
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except (apt.PackageError, subprocess.CalledProcessError, OSError) as exc:
+            logger.warning("Skipping JDK upgrade after apt failure: %s", exc)
+            return False
+        return self._installed_jdk_versions() != before
 
     def install(self, *, upgrade_packages: bool = False) -> bool:
         """Converge the agent service files and required packages to desired state.
 
         Idempotent and safe to run on every reconcile: the systemd unit and launch
         script are re-rendered whenever their contents drift from the shipped
-        templates (reloading and enabling the unit when the unit file changes), and
-        the required apt packages are installed only when missing.
+        templates (reloading and enabling the unit when the unit file changes).
+        Explicit install or upgrade hooks also upgrade the Jenkins JDK.
 
         Returns:
             Whether the rendered service files changed and require a restart.

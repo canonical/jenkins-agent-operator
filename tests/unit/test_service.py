@@ -167,18 +167,32 @@ def test_install_upgrades_jdk_when_requested(
 ):
     """Upgrade the JDK candidate and report that the service needs a restart."""
     _mock_install_host(monkeypatch, tmp_path, package_installed=True)
-    installed = SimpleNamespace(version=apt.Version("21.0.13+9-1", ""))
-    candidate = SimpleNamespace(
-        version=apt.Version("21.0.13.1+2-1~24.04.1", ""), ensure=MagicMock()
-    )
-    monkeypatch.setattr(
-        apt.DebianPackage, "from_installed_package", MagicMock(return_value=installed)
-    )
-    monkeypatch.setattr(apt.DebianPackage, "from_apt_cache", MagicMock(return_value=candidate))
+    before = {"openjdk-21-jre": apt.Version("21.0.13+9-1", "")}
+    after = {"openjdk-21-jre": apt.Version("21.0.13.1+2-1~24.04.1", "")}
+    installed_versions = MagicMock(side_effect=[before, after])
+    apt_run = MagicMock()
+    monkeypatch.setattr(service.JenkinsAgentService, "_installed_jdk_versions", installed_versions)
+    monkeypatch.setattr(service.subprocess, "run", apt_run)
 
     _begin_with_lazy_service(harness)
-    assert _service(harness).install(upgrade_packages=True)
-    candidate.ensure.assert_called_once_with(apt.PackageState.Latest)
+    service_instance = _service(harness)
+    assert service_instance._upgrade_packages()
+    apt_run.assert_called_once()
+    assert apt_run.call_args.kwargs["check"] is True
+    assert apt_run.call_args.args[0][-2:] == list(service.JDK_PACKAGES)
+
+
+def test_install_reports_jdk_update_failure(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Convert apt update failures into the service install error."""
+    _mock_install_host(monkeypatch, tmp_path, package_installed=True)
+    monkeypatch.setattr(
+        apt, "update", MagicMock(side_effect=subprocess.CalledProcessError(1, ["apt-get"]))
+    )
+
+    _begin_with_lazy_service(harness)
+    assert not _service(harness)._upgrade_packages()
 
 
 def test_install_skips_apt_when_package_present(

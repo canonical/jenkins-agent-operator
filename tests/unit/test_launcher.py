@@ -28,6 +28,7 @@ class LauncherRun:
     result: subprocess.CompletedProcess[str]
     curl_output: Path
     java_called: Path
+    mitigation_used: Path
 
 
 def _install_fake_command(fake_bin: Path, name: str) -> None:
@@ -57,6 +58,7 @@ def _run_launcher(
         _install_fake_command(fake_bin, "mv")
     curl_output = tmp_path / "curl-output"
     java_called = tmp_path / "java-called"
+    mitigation_used = tmp_path / "mitigation-used"
     if fail_runtime_directory_creation:
         _install_fake_command(fake_bin, "mkdir")
     state = cast(
@@ -76,6 +78,7 @@ def _run_launcher(
         "JENKINS_TOKEN": "test-token",
         "FAKE_CURL_OUTPUT": str(curl_output),
         "FAKE_JAVA_CALLED": str(java_called),
+        "FAKE_JAVA_MITIGATION_USED": str(mitigation_used),
         "FAKE_CURL_MODE": curl_mode,
         "FAKE_MV_FAILURE": move_failure,
         "FAKE_JAVA_REQUIRE_RUNTIME_DIRECTORIES": str(require_runtime_directories).lower(),
@@ -84,7 +87,12 @@ def _run_launcher(
     result = subprocess.run(  # nosec B603 - launcher and commands are test fixtures
         [str(launcher)], capture_output=True, text=True, env=env, check=False
     )
-    return LauncherRun(result=result, curl_output=curl_output, java_called=java_called)
+    return LauncherRun(
+        result=result,
+        curl_output=curl_output,
+        java_called=java_called,
+        mitigation_used=mitigation_used,
+    )
 
 
 def test_launcher_replaces_unwritable_legacy_agent_jar(tmp_path: Path):
@@ -108,6 +116,7 @@ def test_launcher_replaces_unwritable_legacy_agent_jar(tmp_path: Path):
     assert download_path != agent_jar
     assert not list(home.glob(".agent.jar.*"))
     assert run.java_called.exists()
+    assert run.mitigation_used.exists()
 
 
 def test_launcher_skips_unsupported_mitigation_flag(tmp_path: Path):
@@ -119,6 +128,7 @@ def test_launcher_skips_unsupported_mitigation_flag(tmp_path: Path):
 
     assert run.result.returncode == 0, run.result.stderr
     assert run.java_called.exists()
+    assert not run.mitigation_used.exists()
 
 
 @pytest.mark.parametrize("curl_mode", ["interrupted", "http-error"])

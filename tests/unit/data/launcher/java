@@ -9,6 +9,7 @@ if [ "$1" = "-XX:-UseBASE64Intrinsics" ] && [ "$2" = "-version" ]; then
 fi
 if [ "$1" = "-XX:-UseBASE64Intrinsics" ]; then
     [ "$2" = "-jar" ]
+    touch -- "$FAKE_JAVA_MITIGATION_USED"
     agent_jar="$3"
 else
     [ "$1" = "-jar" ]

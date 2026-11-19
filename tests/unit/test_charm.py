@@ -57,7 +57,7 @@ def test_reconcile_installs_on_every_hook(
     charm: JenkinsAgentCharm = harness.charm
     charm.on.install.emit()
 
-    assert install_mock.call_count == 1
+    install_mock.assert_called_once_with(upgrade_packages=True)
 
 
 def test_reconcile_reinstalls_on_upgrade(
@@ -72,7 +72,26 @@ def test_reconcile_reinstalls_on_upgrade(
 
     harness.charm.on.upgrade_charm.emit()
 
-    assert service_mocks.install.call_count == 1
+    service_mocks.install.assert_called_once_with(upgrade_packages=True)
+
+
+def test_package_restart_requirement_survives_early_reconcile_return(
+    harness: ops.testing.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    agent_relation_data: dict,
+    service_mocks: SimpleNamespace,
+):
+    """Keep a package-triggered restart pending until relation data is available."""
+    harness.begin()
+    service_mocks.install.return_value = True
+
+    harness.charm.on.upgrade_charm.emit()
+    service_mocks.restart.assert_not_called()
+
+    service_mocks.install.return_value = False
+    harness.add_relation(charm_state.AGENT_RELATION, "jenkins-k8s", unit_data=agent_relation_data)
+
+    service_mocks.restart.assert_called_once_with()
 
 
 def test_reconcile_install_error(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch):
