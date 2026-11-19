@@ -323,7 +323,7 @@ class JenkinsAgentService:
         before = self._installed_jdk_versions()
         try:
             apt.update()
-            subprocess.run(
+            subprocess.run(  # nosec B603 - fixed apt-get path and argument list
                 [
                     "/usr/bin/apt-get",
                     "-y",
@@ -336,8 +336,15 @@ class JenkinsAgentService:
                 check=True,
                 capture_output=True,
                 text=True,
+                timeout=1200,
+                env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"},
             )
-        except (apt.PackageError, subprocess.CalledProcessError, OSError) as exc:
+        except (
+            apt.PackageError,
+            subprocess.CalledProcessError,
+            OSError,
+            subprocess.TimeoutExpired,
+        ) as exc:
             logger.warning("Skipping JDK upgrade after apt failure: %s", exc)
             return False
         return self._installed_jdk_versions() != before
@@ -351,7 +358,7 @@ class JenkinsAgentService:
         Explicit install or upgrade hooks also upgrade the Jenkins JDK.
 
         Returns:
-            Whether the rendered service files changed and require a restart.
+            Whether the service must be restarted after installation.
 
         Raises:
             PackageInstallError: if enabling the service or installing a package

@@ -182,10 +182,10 @@ def test_install_upgrades_jdk_when_requested(
     assert apt_run.call_args.args[0][-2:] == list(service.JDK_PACKAGES)
 
 
-def test_install_reports_jdk_update_failure(
+def test_jdk_update_skips_on_apt_failure(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    """Convert apt update failures into the service install error."""
+    """Skip a transient apt update failure and retry on a later upgrade hook."""
     _mock_install_host(monkeypatch, tmp_path, package_installed=True)
     monkeypatch.setattr(
         apt, "update", MagicMock(side_effect=subprocess.CalledProcessError(1, ["apt-get"]))
