@@ -520,9 +520,11 @@ def test_refresh_packages_action(
     assert {"packages-updated", "service-restarted", "version-before", "version-after"} <= set(
         action.results
     )
-    assert action.results["message"]
+    assert action.results["message"] in {
+        "Agent packages refreshed and service restarted.",
+        "Agent packages are already current; service was not restarted.",
+    }
     assert _service_is_active(juju, unit_name)
-
 
 
 def test_agent_relation(
