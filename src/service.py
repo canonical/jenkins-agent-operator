@@ -23,7 +23,7 @@ from charm_state import Credentials, State
 
 logger = logging.getLogger(__name__)
 AGENT_SERVICE_NAME = "jenkins-agent"
-REQUIRED_PACKAGES = ["openjdk-21-jre-headless", "sudo"]
+REQUIRED_PACKAGES = ["openjdk-21-jre", "sudo"]
 PACKAGE_REFRESH_PACKAGES = ("openjdk-21-jre-headless",)
 SYSTEMD_SERVICE_CONF_DIR = "/etc/systemd/system/jenkins-agent.service.d/"
 STARTUP_CHECK_TIMEOUT = 30

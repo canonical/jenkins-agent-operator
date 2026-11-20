@@ -144,7 +144,7 @@ def test_on_install(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatc
     # The package is absent (mock always raises), so every reconcile installs it
     # with the expected package list.
     assert apt_add_package_mock.call_count >= 1
-    assert apt_add_package_mock.call_args_list[0][0][0] == ["openjdk-21-jre-headless", "sudo"]
+    assert apt_add_package_mock.call_args_list[0][0][0] == ["openjdk-21-jre", "sudo"]
     # The unit file is newly written, so the service is reloaded and enabled for
     # automatic start on reboot.
     assert host.service_enable.call_count >= 1
