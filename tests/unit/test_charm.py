@@ -89,8 +89,8 @@ def test_refresh_packages_action_upgrades_and_restarts(
             {"openjdk-21-jre": "21.0.13.1+2-1~24.04.1"},
         ]
     )
-    monkeypatch.setattr(service.JenkinsAgentService, "refresh_jdk_packages", refresh_mock)
-    monkeypatch.setattr(service.JenkinsAgentService, "installed_jdk_versions", versions)
+    monkeypatch.setattr(service.JenkinsAgentService, "refresh_packages", refresh_mock)
+    monkeypatch.setattr(service.JenkinsAgentService, "installed_package_versions", versions)
     harness.begin()
 
     output = harness.run_action("refresh-packages")
@@ -109,7 +109,7 @@ def test_refresh_packages_action_fails_without_relation_credentials(
 ):
     """The action fails when package changes cannot be followed by a restart."""
     refresh_mock = MagicMock()
-    monkeypatch.setattr(service.JenkinsAgentService, "refresh_jdk_packages", refresh_mock)
+    monkeypatch.setattr(service.JenkinsAgentService, "refresh_packages", refresh_mock)
     harness.begin()
 
     with pytest.raises(ops.testing.ActionFailed, match="no complete credentials"):
@@ -126,7 +126,7 @@ def test_refresh_packages_action_fails_on_unsafe_runtime_directories(
 ):
     """Do not upgrade when the agent cannot safely restart."""
     refresh_mock = MagicMock()
-    monkeypatch.setattr(service.JenkinsAgentService, "refresh_jdk_packages", refresh_mock)
+    monkeypatch.setattr(service.JenkinsAgentService, "refresh_packages", refresh_mock)
     monkeypatch.setattr(
         service.JenkinsAgentService, "runtime_directories_usable", MagicMock(return_value=False)
     )
@@ -145,7 +145,7 @@ def test_refresh_packages_action_reports_restart_failure(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """Report a service restart failure after package refresh."""
-    monkeypatch.setattr(service.JenkinsAgentService, "refresh_jdk_packages", MagicMock())
+    monkeypatch.setattr(service.JenkinsAgentService, "refresh_packages", MagicMock())
     service_mocks.restart.side_effect = service.ServiceRestartError("restart failed")
     harness_with_agent_relation.begin()
 

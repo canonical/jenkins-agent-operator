@@ -2,7 +2,7 @@
 
 ## `refresh-packages`
 
-Upgrade the Jenkins agent OpenJDK packages from the configured apt archive and
+Upgrade the Jenkins agent packages from the configured apt archive and
 restart the agent service. The action checks relation credentials and runtime
 directory safety before changing packages. If the action fails, fix the reported
 prerequisite and run it again.

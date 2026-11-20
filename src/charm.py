@@ -165,9 +165,9 @@ class JenkinsAgentCharm(ops.CharmBase):
                 event.fail(message)
                 return
 
-            versions_before = agent_service.installed_jdk_versions()
-            agent_service.refresh_jdk_packages()
-            versions_after = agent_service.installed_jdk_versions()
+            versions_before = agent_service.installed_package_versions()
+            agent_service.refresh_packages()
+            versions_after = agent_service.installed_package_versions()
             agent_service.restart()
         except (
             InvalidStateError,

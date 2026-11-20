@@ -17,7 +17,7 @@ Once the charm is ready, the status will show the new revision number.
 ## Refresh the agent packages
 
 Run the explicit package action during a maintenance window to upgrade the
-OpenJDK runtime and restart the agent service:
+agent packages and restart the agent service:
 
 ```bash
 juju run --wait=30m jenkins-agent/0 refresh-packages

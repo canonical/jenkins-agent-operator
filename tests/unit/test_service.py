@@ -152,28 +152,30 @@ def test_on_install(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatc
     assert harness.charm.unit.status.name == ops.BlockedStatus.name
 
 
-def test_refresh_jdk_packages_uses_only_upgrade(
+def test_refresh_packages_uses_only_upgrade(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    """Refresh the JDK packages through apt without pinning a cache stanza."""
+    """Refresh the agent packages through apt without pinning a cache stanza."""
     _mock_install_host(monkeypatch, tmp_path, package_installed=True)
     apt_run = MagicMock()
     monkeypatch.setattr(service.subprocess, "run", apt_run)
 
     _begin_with_lazy_service(harness)
-    _service(harness).refresh_jdk_packages()
+    _service(harness).refresh_packages()
 
     apt_run.assert_called_once()
     command = apt_run.call_args.args[0]
     assert command[0] == "/usr/bin/apt-get"
     assert "--only-upgrade" in command
-    assert command[-2:] == list(service.JDK_PACKAGES)
+    assert command[-len(service.PACKAGE_REFRESH_PACKAGES) :] == list(
+        service.PACKAGE_REFRESH_PACKAGES
+    )
     assert apt_run.call_args.kwargs["check"] is True
     assert apt_run.call_args.kwargs["timeout"] == 1200
     assert apt_run.call_args.kwargs["env"]["DEBIAN_FRONTEND"] == "noninteractive"
 
 
-def test_refresh_jdk_packages_reports_apt_failure(
+def test_refresh_packages_reports_apt_failure(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     """Report an apt update failure to the explicit package action."""
@@ -183,8 +185,8 @@ def test_refresh_jdk_packages_reports_apt_failure(
     )
 
     _begin_with_lazy_service(harness)
-    with pytest.raises(service.PackageInstallError, match="JDK package refresh failed"):
-        _service(harness).refresh_jdk_packages()
+    with pytest.raises(service.PackageInstallError, match="Agent package refresh failed"):
+        _service(harness).refresh_packages()
 
 
 def test_install_skips_apt_when_package_present(

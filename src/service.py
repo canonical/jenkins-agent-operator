@@ -23,8 +23,8 @@ from charm_state import Credentials, State
 
 logger = logging.getLogger(__name__)
 AGENT_SERVICE_NAME = "jenkins-agent"
-JDK_PACKAGES = ("openjdk-21-jre", "openjdk-21-jre-headless")
-REQUIRED_PACKAGES = [JDK_PACKAGES[0], "sudo"]
+REQUIRED_PACKAGES = ["openjdk-21-jre", "sudo"]
+PACKAGE_REFRESH_PACKAGES = ("openjdk-21-jre", "openjdk-21-jre-headless", "sudo")
 SYSTEMD_SERVICE_CONF_DIR = "/etc/systemd/system/jenkins-agent.service.d/"
 STARTUP_CHECK_TIMEOUT = 30
 STARTUP_CHECK_INTERVAL = 2
@@ -308,18 +308,18 @@ class JenkinsAgentService:
                 return False
         return True
 
-    def installed_jdk_versions(self) -> dict[str, str]:
-        """Return installed versions for the JDK packages used by the agent."""
+    def installed_package_versions(self) -> dict[str, str]:
+        """Return installed versions for packages used by the agent service."""
         versions = {}
-        for package in JDK_PACKAGES:
+        for package in PACKAGE_REFRESH_PACKAGES:
             try:
                 versions[package] = str(apt.DebianPackage.from_installed_package(package).version)
             except apt.PackageNotFoundError:
                 continue
         return versions
 
-    def refresh_jdk_packages(self) -> None:
-        """Refresh and upgrade the installed Jenkins agent JDK packages."""
+    def refresh_packages(self) -> None:
+        """Refresh and upgrade packages used by the Jenkins agent service."""
         try:
             apt.update()
             subprocess.run(  # nosec B603 - fixed apt-get path and argument list
@@ -330,7 +330,7 @@ class JenkinsAgentService:
                     "-o",
                     "Dpkg::Options::=--force-confold",
                     "install",
-                    *JDK_PACKAGES,
+                    *PACKAGE_REFRESH_PACKAGES,
                 ],
                 check=True,
                 capture_output=True,
@@ -339,7 +339,7 @@ class JenkinsAgentService:
                 env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"},
             )
         except (apt.PackageError, subprocess.SubprocessError, OSError) as exc:
-            raise PackageInstallError(f"JDK package refresh failed: {exc}") from exc
+            raise PackageInstallError(f"Agent package refresh failed: {exc}") from exc
 
     def install(self) -> bool:
         """Converge the agent service files and required packages to desired state.
