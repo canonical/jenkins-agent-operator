@@ -103,6 +103,27 @@ def test_refresh_packages_action_upgrades_and_restarts(
     assert output.results["version-after"]["openjdk-21-jre"] == "21.0.13.1+2-1~24.04.1"
 
 
+def test_refresh_packages_action_skips_restart_when_versions_unchanged(
+    harness_with_agent_relation: ops.testing.Harness,
+    service_mocks: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Do not restart a running agent when the package versions did not change."""
+    versions = {"openjdk-21-jre-headless": "21.0.13.1+2-1~24.04.1"}
+    monkeypatch.setattr(service.JenkinsAgentService, "refresh_packages", MagicMock())
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "installed_package_versions", MagicMock(return_value=versions)
+    )
+    monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
+    harness_with_agent_relation.begin()
+
+    output = harness_with_agent_relation.run_action("refresh-packages")
+
+    assert output.results["packages-updated"] is False
+    assert output.results["service-restarted"] is False
+    service_mocks.restart.assert_not_called()
+
+
 def test_refresh_packages_action_fails_without_relation_credentials(
     harness: ops.testing.Harness,
     service_mocks: SimpleNamespace,
@@ -111,6 +132,13 @@ def test_refresh_packages_action_fails_without_relation_credentials(
     """The action refreshes packages but fails when a running agent lacks credentials."""
     refresh_mock = MagicMock()
     monkeypatch.setattr(service.JenkinsAgentService, "refresh_packages", refresh_mock)
+    monkeypatch.setattr(
+        service.JenkinsAgentService,
+        "installed_package_versions",
+        MagicMock(
+            side_effect=[{"openjdk-21-jre-headless": "old"}, {"openjdk-21-jre-headless": "new"}]
+        ),
+    )
     monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
     harness.begin()
 
@@ -129,6 +157,13 @@ def test_refresh_packages_action_fails_on_unsafe_runtime_directories(
     """The action refreshes packages but fails when runtime directories are unsafe."""
     refresh_mock = MagicMock()
     monkeypatch.setattr(service.JenkinsAgentService, "refresh_packages", refresh_mock)
+    monkeypatch.setattr(
+        service.JenkinsAgentService,
+        "installed_package_versions",
+        MagicMock(
+            side_effect=[{"openjdk-21-jre-headless": "old"}, {"openjdk-21-jre-headless": "new"}]
+        ),
+    )
     monkeypatch.setattr(
         service.JenkinsAgentService, "runtime_directories_usable", MagicMock(return_value=False)
     )
@@ -149,6 +184,13 @@ def test_refresh_packages_action_reports_restart_failure(
 ):
     """Report a service restart failure after package refresh."""
     monkeypatch.setattr(service.JenkinsAgentService, "refresh_packages", MagicMock())
+    monkeypatch.setattr(
+        service.JenkinsAgentService,
+        "installed_package_versions",
+        MagicMock(
+            side_effect=[{"openjdk-21-jre-headless": "old"}, {"openjdk-21-jre-headless": "new"}]
+        ),
+    )
     monkeypatch.setattr(service.JenkinsAgentService, "is_running", PropertyMock(return_value=True))
     service_mocks.restart.side_effect = service.ServiceRestartError("restart failed")
     harness_with_agent_relation.begin()

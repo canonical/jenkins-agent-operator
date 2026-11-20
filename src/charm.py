@@ -151,10 +151,23 @@ class JenkinsAgentCharm(ops.CharmBase):
             versions_before = agent_service.installed_package_versions()
             agent_service.refresh_packages()
             versions_after = agent_service.installed_package_versions()
+            packages_updated = versions_before != versions_after
 
+            if not packages_updated:
+                event.set_results(
+                    {
+                        "packages-updated": False,
+                        "service-restarted": False,
+                        "version-before": versions_before,
+                        "version-after": versions_after,
+                        "message": "Agent packages are already current; service was not restarted.",
+                    }
+                )
+                return
             if not agent_service.is_running:
                 event.set_results(
                     {
+                        "packages-updated": True,
                         "service-restarted": False,
                         "version-before": versions_before,
                         "version-after": versions_after,
@@ -169,6 +182,7 @@ class JenkinsAgentCharm(ops.CharmBase):
                 )
                 event.set_results(
                     {
+                        "packages-updated": True,
                         "service-restarted": False,
                         "version-before": versions_before,
                         "version-after": versions_after,
@@ -184,6 +198,7 @@ class JenkinsAgentCharm(ops.CharmBase):
                 )
                 event.set_results(
                     {
+                        "packages-updated": True,
                         "service-restarted": False,
                         "version-before": versions_before,
                         "version-after": versions_after,
@@ -203,6 +218,7 @@ class JenkinsAgentCharm(ops.CharmBase):
             return
         event.set_results(
             {
+                "packages-updated": True,
                 "service-restarted": True,
                 "version-before": versions_before,
                 "version-after": versions_after,
