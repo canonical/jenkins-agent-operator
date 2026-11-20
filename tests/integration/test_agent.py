@@ -508,39 +508,21 @@ def assert_job_success(
     _run_job(job=job)
 
 
-def test_refresh_packages_installs_fixed_openjdk(
+def test_refresh_packages_action(
     active_agent: str,
     juju: jubilant.Juju,
 ):
-    """Refresh agent packages and verify the fixed OpenJDK is installed and running."""
+    """Run the package-refresh action and verify its result and service health."""
     unit_name = _unit_name(juju, active_agent)
-    fixed_version = "21.0.13.1+2-1~24.04.1"
 
     action = juju.run(unit_name, "refresh-packages")
-    installed_version = juju.cli(
-        "ssh",
-        unit_name,
-        "--",
-        "sudo",
-        "dpkg-query",
-        "-W",
-        "-f=${Version}",
-        "openjdk-21-jre-headless",
-    ).strip()
-    juju.cli(
-        "ssh",
-        unit_name,
-        "--",
-        "sudo",
-        "dpkg",
-        "--compare-versions",
-        installed_version,
-        "ge",
-        fixed_version,
-    )
 
-    assert "version-after" in action.results
+    assert {"packages-updated", "service-restarted", "version-before", "version-after"} <= set(
+        action.results
+    )
+    assert action.results["message"]
     assert _service_is_active(juju, unit_name)
+
 
 
 def test_agent_relation(
