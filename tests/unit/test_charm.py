@@ -102,7 +102,7 @@ def test_refresh_packages_action_upgrades_and_restarts(
     assert output.results["version-after"]["openjdk-21-jre"] == "21.0.13.1+2-1~24.04.1"
 
 
-def test_refresh_packages_action_fails_when_restart_is_pending(
+def test_refresh_packages_action_fails_without_relation_credentials(
     harness: ops.testing.Harness,
     service_mocks: SimpleNamespace,
     monkeypatch: pytest.MonkeyPatch,
