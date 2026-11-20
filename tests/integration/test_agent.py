@@ -508,6 +508,25 @@ def assert_job_success(
     _run_job(job=job)
 
 
+def test_refresh_packages_action(
+    active_agent: str,
+    juju: jubilant.Juju,
+):
+    """Run the package-refresh action and verify its result and service health."""
+    unit_name = _unit_name(juju, active_agent)
+
+    action = juju.run(unit_name, "refresh-packages")
+
+    assert {"packages-updated", "service-restarted", "version-before", "version-after"} <= set(
+        action.results
+    )
+    assert action.results["message"] in {
+        "Agent packages refreshed and service restarted.",
+        "Agent packages are already current; service was not restarted.",
+    }
+    assert _service_is_active(juju, unit_name)
+
+
 def test_agent_relation(
     jenkins_client: jenkinsapi.jenkins.Jenkins, active_agent: str, use_docker: bool
 ):

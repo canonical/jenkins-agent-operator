@@ -44,6 +44,11 @@ parts:
       "*": "templates/"
 
 actions:
+  refresh-packages:
+    description: >
+      Upgrade the Jenkins agent packages from the configured archive and restart the agent
+      service if required.
+    additionalProperties: false
   migrate-runtime-directory:
     description: >
       Recursively update ownership and owner permissions for a Jenkins directory.

@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Each revision is versioned by the date of the revision.
 
+## 2026-11-19
+
+- Add a `refresh-packages` action that upgrades the Jenkins agent packages and restarts the
+  agent service when required. Normal charm reconciliation and status hooks do not perform package
+  upgrades.
+
 ## 2026-10-14
 
 - Add a CC008-compliant Terraform charm module at `terraform/charm`, wired to

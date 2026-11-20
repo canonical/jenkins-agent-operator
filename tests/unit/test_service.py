@@ -88,9 +88,12 @@ def _mock_install_host(
     monkeypatch.setattr(systemd, "daemon_reload", daemon_reload)
     monkeypatch.setattr(systemd, "service_enable", service_enable)
     from_installed = (
-        MagicMock() if package_installed else MagicMock(side_effect=apt.PackageNotFoundError)
+        MagicMock(return_value=SimpleNamespace(version=apt.Version("21.0.13.1+2-1~24.04.1", "")))
+        if package_installed
+        else MagicMock(side_effect=apt.PackageNotFoundError)
     )
     monkeypatch.setattr(apt.DebianPackage, "from_installed_package", from_installed)
+    monkeypatch.setattr(apt, "update", MagicMock())
     monkeypatch.setattr(apt, "add_package", MagicMock())
     _make_fake_useradd(monkeypatch)
     return SimpleNamespace(
@@ -147,6 +150,43 @@ def test_on_install(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatc
     assert host.service_enable.call_count >= 1
 
     assert harness.charm.unit.status.name == ops.BlockedStatus.name
+
+
+def test_refresh_packages_uses_only_upgrade(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Refresh the agent packages through apt without pinning a cache stanza."""
+    _mock_install_host(monkeypatch, tmp_path, package_installed=True)
+    apt_run = MagicMock()
+    monkeypatch.setattr(service.subprocess, "run", apt_run)
+
+    _begin_with_lazy_service(harness)
+    _service(harness).refresh_packages()
+
+    apt_run.assert_called_once()
+    command = apt_run.call_args.args[0]
+    assert command[0] == "/usr/bin/apt-get"
+    assert "--only-upgrade" in command
+    assert command[-len(service.PACKAGE_REFRESH_PACKAGES) :] == list(
+        service.PACKAGE_REFRESH_PACKAGES
+    )
+    assert apt_run.call_args.kwargs["check"] is True
+    assert apt_run.call_args.kwargs["timeout"] == 1200
+    assert apt_run.call_args.kwargs["env"]["DEBIAN_FRONTEND"] == "noninteractive"
+
+
+def test_refresh_packages_reports_apt_failure(
+    harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Report an apt update failure to the explicit package action."""
+    _mock_install_host(monkeypatch, tmp_path, package_installed=True)
+    monkeypatch.setattr(
+        apt, "update", MagicMock(side_effect=subprocess.CalledProcessError(1, ["apt-get"]))
+    )
+
+    _begin_with_lazy_service(harness)
+    with pytest.raises(service.PackageInstallError, match="Agent package refresh failed"):
+        _service(harness).refresh_packages()
 
 
 def test_install_skips_apt_when_package_present(

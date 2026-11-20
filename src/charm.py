@@ -32,6 +32,7 @@ class JenkinsAgentCharm(ops.CharmBase):
             self._on_migrate_runtime_directory_action,
         )
         self.framework.observe(self.on.upgrade_charm, self._on_upgrade_charm)
+        self.framework.observe(self.on.refresh_packages_action, self._on_refresh_packages_action)
         for event in (
             self.on.install,
             self.on.start,
@@ -142,6 +143,89 @@ class JenkinsAgentCharm(ops.CharmBase):
         """Reconcile an upgrade and repair legacy runtime ownership when needed."""
         self._reconcile(event, automatic_runtime_migration=True)
 
+    def _on_refresh_packages_action(self, event: ops.ActionEvent) -> None:
+        """Upgrade agent packages and restart a running agent when required."""
+        try:
+            state = State.from_charm(self)
+            agent_service = service.JenkinsAgentService(state)
+            versions_before = agent_service.installed_package_versions()
+            agent_service.refresh_packages()
+            versions_after = agent_service.installed_package_versions()
+            packages_updated = versions_before != versions_after
+
+            if not packages_updated:
+                event.set_results(
+                    {
+                        "packages-updated": False,
+                        "service-restarted": False,
+                        "version-before": versions_before,
+                        "version-after": versions_after,
+                        "message": "Agent packages are already current; service was not restarted.",
+                    }
+                )
+                return
+            if not agent_service.is_running:
+                event.set_results(
+                    {
+                        "packages-updated": True,
+                        "service-restarted": False,
+                        "version-before": versions_before,
+                        "version-after": versions_after,
+                        "message": "Agent packages refreshed; service was not running.",
+                    }
+                )
+                return
+            if not state.agent_relation_credentials:
+                message = (
+                    "Packages upgraded; the running agent was not restarted because the agent "
+                    "relation has no complete credentials. Re-run after the relation is ready."
+                )
+                event.set_results(
+                    {
+                        "packages-updated": True,
+                        "service-restarted": False,
+                        "version-before": versions_before,
+                        "version-after": versions_after,
+                        "message": message,
+                    }
+                )
+                event.fail(message)
+                return
+            if not agent_service.runtime_directories_usable():
+                message = (
+                    "Packages upgraded; the running agent was not restarted because runtime "
+                    "directories are unsafe. Run migrate-runtime-directory and retry."
+                )
+                event.set_results(
+                    {
+                        "packages-updated": True,
+                        "service-restarted": False,
+                        "version-before": versions_before,
+                        "version-after": versions_after,
+                        "message": message,
+                    }
+                )
+                event.fail(message)
+                return
+            agent_service.restart()
+        except (
+            InvalidStateError,
+            RuntimeError,
+            service.PackageInstallError,
+            service.ServiceRestartError,
+        ) as exc:
+            event.fail(str(exc))
+            return
+        event.set_results(
+            {
+                "packages-updated": True,
+                "service-restarted": True,
+                "version-before": versions_before,
+                "version-after": versions_after,
+                "message": "Agent packages refreshed and service restarted.",
+            }
+        )
+
     def _block_automatic_runtime_migration(self, error: Exception) -> None:
         """Set actionable blocked status after automatic migration cannot proceed."""
         logger.error("Automatic runtime ownership migration failed: %s", error)
@@ -231,7 +315,7 @@ class JenkinsAgentCharm(ops.CharmBase):
             agent_service: The service built from the current desired state.
 
         Returns:
-            Whether rendered service files changed and require a restart.
+            Whether the service must be restarted after installation.
 
         Raises:
             RuntimeError: when the installation of the agent service fails.
