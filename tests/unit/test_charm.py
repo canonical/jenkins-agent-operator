@@ -57,7 +57,7 @@ def test_reconcile_installs_on_every_hook(
     charm: JenkinsAgentCharm = harness.charm
     charm.on.install.emit()
 
-    install_mock.assert_called_once_with(upgrade_packages=True)
+    install_mock.assert_called_once_with()
 
 
 def test_reconcile_reinstalls_on_upgrade(
@@ -72,26 +72,41 @@ def test_reconcile_reinstalls_on_upgrade(
 
     harness.charm.on.upgrade_charm.emit()
 
-    service_mocks.install.assert_called_once_with(upgrade_packages=True)
+    service_mocks.install.assert_called_once_with()
 
 
-def test_package_restart_requirement_survives_early_reconcile_return(
-    harness: ops.testing.Harness,
-    monkeypatch: pytest.MonkeyPatch,
-    agent_relation_data: dict,
+def test_refresh_packages_action_upgrades_and_restarts(
+    harness_with_agent_relation: ops.testing.Harness,
     service_mocks: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
 ):
-    """Keep a package-triggered restart pending until relation data is available."""
+    """The explicit package action permits upgrade and reports success after restart."""
+    harness = harness_with_agent_relation
+    refresh_mock = MagicMock()
+    monkeypatch.setattr(service.JenkinsAgentService, "refresh_jdk_packages", refresh_mock)
     harness.begin()
-    service_mocks.install.return_value = True
 
-    harness.charm.on.upgrade_charm.emit()
-    service_mocks.restart.assert_not_called()
+    output = harness.run_action("refresh-packages")
 
-    service_mocks.install.return_value = False
-    harness.add_relation(charm_state.AGENT_RELATION, "jenkins-k8s", unit_data=agent_relation_data)
-
+    refresh_mock.assert_called_once_with()
     service_mocks.restart.assert_called_once_with()
+    assert output.results["message"] == "Agent packages refreshed and service restarted."
+
+
+def test_refresh_packages_action_fails_when_restart_is_pending(
+    harness: ops.testing.Harness,
+    service_mocks: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The action fails when package changes cannot be followed by a restart."""
+    refresh_mock = MagicMock()
+    monkeypatch.setattr(service.JenkinsAgentService, "refresh_jdk_packages", refresh_mock)
+    harness.begin()
+
+    with pytest.raises(ops.testing.ActionFailed, match="no complete credentials"):
+        harness.run_action("refresh-packages")
+
+    service_mocks.restart.assert_not_called()
 
 
 def test_reconcile_install_error(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch):

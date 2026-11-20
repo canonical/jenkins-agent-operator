@@ -20,8 +20,6 @@ logger = logging.getLogger()
 class JenkinsAgentCharm(ops.CharmBase):
     """Charm Jenkins agent."""
 
-    _stored = ops.StoredState()
-
     def __init__(self, *args: typing.Any):
         """Initialize the charm and register event handlers.
 
@@ -29,12 +27,12 @@ class JenkinsAgentCharm(ops.CharmBase):
             args: Arguments to initialize the charm base.
         """
         super().__init__(*args)
-        self._stored.set_default(restart_required=False)
         self.framework.observe(
             self.on.migrate_runtime_directory_action,
             self._on_migrate_runtime_directory_action,
         )
         self.framework.observe(self.on.upgrade_charm, self._on_upgrade_charm)
+        self.framework.observe(self.on.refresh_packages_action, self._on_refresh_packages_action)
         for event in (
             self.on.install,
             self.on.start,
@@ -145,6 +143,44 @@ class JenkinsAgentCharm(ops.CharmBase):
         """Reconcile an upgrade and repair legacy runtime ownership when needed."""
         self._reconcile(event, automatic_runtime_migration=True)
 
+    def _on_refresh_packages_action(self, event: ops.ActionEvent) -> None:
+        """Upgrade the JDK and restart the agent when prerequisites allow."""
+        try:
+            state = State.from_charm(self)
+            agent_service = service.JenkinsAgentService(state)
+            agent_service.refresh_jdk_packages()
+            if not state.agent_relation_credentials:
+                message = (
+                    "Packages upgraded; agent not restarted because the agent relation has "
+                    "no complete credentials. Re-run after the relation is ready."
+                )
+                event.set_results({"service-restarted": False, "message": message})
+                event.fail(message)
+                return
+            if not agent_service.runtime_directories_usable():
+                message = (
+                    "Packages upgraded; agent not restarted because runtime directories are "
+                    "unsafe. Run migrate-runtime-directory and retry."
+                )
+                event.set_results({"service-restarted": False, "message": message})
+                event.fail(message)
+                return
+            agent_service.restart()
+        except (
+            InvalidStateError,
+            RuntimeError,
+            service.PackageInstallError,
+            service.ServiceRestartError,
+        ) as exc:
+            event.fail(str(exc))
+            return
+        event.set_results(
+            {
+                "service-restarted": True,
+                "message": "Agent packages refreshed and service restarted.",
+            }
+        )
+
     def _block_automatic_runtime_migration(self, error: Exception) -> None:
         """Set actionable blocked status after automatic migration cannot proceed."""
         logger.error("Automatic runtime ownership migration failed: %s", error)
@@ -194,12 +230,7 @@ class JenkinsAgentCharm(ops.CharmBase):
             return False
         return True
 
-    def _reconcile(
-        self,
-        event: ops.EventBase,
-        *,
-        automatic_runtime_migration: bool = False,
-    ) -> None:
+    def _reconcile(self, _: ops.EventBase, *, automatic_runtime_migration: bool = False) -> None:
         """Reconcile the agent to its desired state on every event.
 
         Raises:
@@ -222,28 +253,21 @@ class JenkinsAgentCharm(ops.CharmBase):
                     return
                 raise RuntimeError("Error stopping the agent service") from exc
 
-        upgrade_packages = isinstance(event, (ops.InstallEvent, ops.UpgradeCharmEvent))
-        restart_required = bool(
-            self._reconcile_installation(desired_service, upgrade_packages=upgrade_packages)
-        )
-        self._stored.restart_required = bool(self._stored.restart_required) or restart_required
+        service_files_changed = self._reconcile_installation(desired_service)
         if automatic_runtime_migration and not self._is_automatic_runtime_migration_successful(
             desired_service
         ):
             return
         self._reconcile_relation_data(desired_state)
         self._reconcile_service(
-            desired_state, desired_service, restart_required=bool(self._stored.restart_required)
+            desired_state, desired_service, service_files_changed=service_files_changed
         )
 
-    def _reconcile_installation(
-        self, agent_service: service.JenkinsAgentService, *, upgrade_packages: bool = False
-    ) -> bool:
+    def _reconcile_installation(self, agent_service: service.JenkinsAgentService) -> bool:
         """Ensure the agent package and service files are installed and current.
 
         Args:
             agent_service: The service built from the current desired state.
-            upgrade_packages: Whether package upgrades are allowed for this event.
 
         Returns:
             Whether the service must be restarted after installation.
@@ -252,7 +276,7 @@ class JenkinsAgentCharm(ops.CharmBase):
             RuntimeError: when the installation of the agent service fails.
         """
         try:
-            return agent_service.install(upgrade_packages=upgrade_packages)
+            return agent_service.install()
         except service.PackageInstallError as exc:
             logger.error("Error installing the agent service %s", exc)
             raise RuntimeError("Error installing the agent service") from exc
@@ -269,14 +293,14 @@ class JenkinsAgentCharm(ops.CharmBase):
         self,
         state: State,
         agent_service: service.JenkinsAgentService,
-        restart_required: bool = False,
+        service_files_changed: bool = False,
     ) -> None:
         """Converge the jenkins agent systemd service to the desired state.
 
         Args:
             state: The current desired charm state.
             agent_service: The service built from the current desired state.
-            restart_required: Whether installation requires a service restart.
+            service_files_changed: Whether local service configuration changed.
 
         Raises:
             RuntimeError: when the service fails to properly start.
@@ -298,7 +322,7 @@ class JenkinsAgentCharm(ops.CharmBase):
 
         if (
             agent_service.is_ready
-            and not restart_required
+            and not service_files_changed
             and not agent_service.credentials_changed(credentials)
         ):
             logger.info("Agent running with current credentials. No restart needed.")
@@ -319,7 +343,6 @@ class JenkinsAgentCharm(ops.CharmBase):
             logger.error("Error restarting the agent service %s", exc)
             raise RuntimeError("Error restarting the agent service") from exc
 
-        self._stored.restart_required = False
         self.unit.status = ops.ActiveStatus()
 
 

@@ -162,37 +162,34 @@ def test_on_install(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatc
     assert harness.charm.unit.status.name == ops.BlockedStatus.name
 
 
-def test_install_upgrades_jdk_when_requested(
+def test_refresh_jdk_packages_uses_only_upgrade(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    """Upgrade the JDK candidate and report that the service needs a restart."""
+    """Refresh the JDK packages through apt without pinning a cache stanza."""
     _mock_install_host(monkeypatch, tmp_path, package_installed=True)
-    before = {"openjdk-21-jre": apt.Version("21.0.13+9-1", "")}
-    after = {"openjdk-21-jre": apt.Version("21.0.13.1+2-1~24.04.1", "")}
-    installed_versions = MagicMock(side_effect=[before, after])
     apt_run = MagicMock()
-    monkeypatch.setattr(service.JenkinsAgentService, "_installed_jdk_versions", installed_versions)
     monkeypatch.setattr(service.subprocess, "run", apt_run)
 
     _begin_with_lazy_service(harness)
-    service_instance = _service(harness)
-    assert service_instance._upgrade_packages()
+    _service(harness).refresh_jdk_packages()
+
     apt_run.assert_called_once()
-    assert apt_run.call_args.kwargs["check"] is True
     assert apt_run.call_args.args[0][-2:] == list(service.JDK_PACKAGES)
+    assert apt_run.call_args.kwargs["check"] is True
 
 
-def test_jdk_update_skips_on_apt_failure(
+def test_refresh_jdk_packages_reports_apt_failure(
     harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    """Skip a transient apt update failure and retry on a later upgrade hook."""
+    """Report an apt update failure to the explicit package action."""
     _mock_install_host(monkeypatch, tmp_path, package_installed=True)
     monkeypatch.setattr(
         apt, "update", MagicMock(side_effect=subprocess.CalledProcessError(1, ["apt-get"]))
     )
 
     _begin_with_lazy_service(harness)
-    assert not _service(harness)._upgrade_packages()
+    with pytest.raises(service.PackageInstallError, match="JDK package refresh failed"):
+        _service(harness).refresh_jdk_packages()
 
 
 def test_install_skips_apt_when_package_present(

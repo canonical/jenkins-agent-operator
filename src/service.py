@@ -308,19 +308,8 @@ class JenkinsAgentService:
                 return False
         return True
 
-    def _installed_jdk_versions(self) -> dict[str, apt.Version]:
-        """Return installed versions for the JDK packages that provide the JVM."""
-        versions = {}
-        for package in JDK_PACKAGES:
-            try:
-                versions[package] = apt.DebianPackage.from_installed_package(package).version
-            except apt.PackageNotFoundError:
-                continue
-        return versions
-
-    def _upgrade_packages(self) -> bool:
-        """Upgrade the Jenkins agent JDK without pinning an apt-cache stanza."""
-        before = self._installed_jdk_versions()
+    def refresh_jdk_packages(self) -> None:
+        """Refresh and upgrade the installed Jenkins agent JDK packages."""
         try:
             apt.update()
             subprocess.run(  # nosec B603 - fixed apt-get path and argument list
@@ -339,23 +328,16 @@ class JenkinsAgentService:
                 timeout=1200,
                 env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"},
             )
-        except (
-            apt.PackageError,
-            subprocess.CalledProcessError,
-            OSError,
-            subprocess.TimeoutExpired,
-        ) as exc:
-            logger.warning("Skipping JDK upgrade after apt failure: %s", exc)
-            return False
-        return self._installed_jdk_versions() != before
+        except (apt.PackageError, subprocess.SubprocessError, OSError) as exc:
+            raise PackageInstallError(f"JDK package refresh failed: {exc}") from exc
 
-    def install(self, *, upgrade_packages: bool = False) -> bool:
+    def install(self) -> bool:
         """Converge the agent service files and required packages to desired state.
 
         Idempotent and safe to run on every reconcile: the systemd unit and launch
         script are re-rendered whenever their contents drift from the shipped
         templates (reloading and enabling the unit when the unit file changes).
-        Explicit install or upgrade hooks also upgrade the Jenkins JDK.
+        Package upgrades are handled by the explicit package-refresh action.
 
         Returns:
             Whether the service must be restarted after installation.
@@ -364,15 +346,11 @@ class JenkinsAgentService:
             PackageInstallError: if enabling the service or installing a package
                 failed.
         """
-        package_changed = False
         if not self._required_packages_installed():
             try:
                 apt.add_package(REQUIRED_PACKAGES, update_cache=True)
             except (apt.PackageError, apt.PackageNotFoundError) as exc:
                 raise PackageInstallError("Error installing the required packages") from exc
-            package_changed = True
-        elif upgrade_packages:
-            package_changed = self._upgrade_packages()
 
         self._ensure_user_and_home()
         unit_file_changed = self._sync_service_files()
@@ -384,7 +362,7 @@ class JenkinsAgentService:
                 systemd.service_enable(AGENT_SERVICE_NAME)
             except systemd.SystemdError as exc:
                 raise PackageInstallError("Error enabling the agent service") from exc
-        return package_changed or unit_file_changed
+        return unit_file_changed
 
     def _ensure_user_and_home(self) -> None:
         """Ensure the configured agent user exists, owns the home, and can sudo.

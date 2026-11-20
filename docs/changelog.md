@@ -8,10 +8,10 @@ Each revision is versioned by the date of the revision.
 
 ## 2026-11-19
 
-- Upgrade the Jenkins agent OpenJDK packages during install and charm upgrades, preserving a
-  pending service restart until the patched JVM is running.
-- Temporarily disable the vulnerable Base64 intrinsic when the JVM accepts the mitigation flag;
-  normal status and relation reconciliation do not perform apt mutations.
+- Add a `refresh-packages` action that upgrades the Jenkins agent OpenJDK packages and restarts the
+  agent service when required. Normal charm reconciliation and status hooks do not perform apt
+  mutations.
+- Temporarily disable the vulnerable Base64 intrinsic when the JVM accepts the mitigation flag.
 
 ## 2026-10-14
 
