@@ -1,5 +1,19 @@
 # Actions
 
+## `refresh-packages`
+
+Upgrade the Jenkins agent OpenJDK packages from the configured apt archive and
+restart the agent service. The action checks relation credentials and runtime
+directory safety before changing packages. If the action fails, fix the reported
+prerequisite and run it again.
+
+```bash
+juju run --wait=30m jenkins-agent/0 refresh-packages
+```
+
+The action returns the installed package versions before and after the refresh.
+It does not run from `update-status`, relation hooks, or configuration changes.
+
 ## `migrate-runtime-directory`
 
 Migrate an existing Jenkins directory tree in place to the configured

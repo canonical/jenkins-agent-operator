@@ -93,16 +93,6 @@ def _mock_install_host(
         else MagicMock(side_effect=apt.PackageNotFoundError)
     )
     monkeypatch.setattr(apt.DebianPackage, "from_installed_package", from_installed)
-    monkeypatch.setattr(
-        apt.DebianPackage,
-        "from_apt_cache",
-        MagicMock(
-            return_value=SimpleNamespace(
-                version=apt.Version("21.0.13.1+2-1~24.04.1", ""),
-                ensure=MagicMock(),
-            )
-        ),
-    )
     monkeypatch.setattr(apt, "update", MagicMock())
     monkeypatch.setattr(apt, "add_package", MagicMock())
     _make_fake_useradd(monkeypatch)
@@ -174,8 +164,13 @@ def test_refresh_jdk_packages_uses_only_upgrade(
     _service(harness).refresh_jdk_packages()
 
     apt_run.assert_called_once()
-    assert apt_run.call_args.args[0][-2:] == list(service.JDK_PACKAGES)
+    command = apt_run.call_args.args[0]
+    assert command[0] == "/usr/bin/apt-get"
+    assert "--only-upgrade" in command
+    assert command[-2:] == list(service.JDK_PACKAGES)
     assert apt_run.call_args.kwargs["check"] is True
+    assert apt_run.call_args.kwargs["timeout"] == 1200
+    assert apt_run.call_args.kwargs["env"]["DEBIAN_FRONTEND"] == "noninteractive"
 
 
 def test_refresh_jdk_packages_reports_apt_failure(

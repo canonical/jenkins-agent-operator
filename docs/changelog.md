@@ -9,8 +9,8 @@ Each revision is versioned by the date of the revision.
 ## 2026-11-19
 
 - Add a `refresh-packages` action that upgrades the Jenkins agent OpenJDK packages and restarts the
-  agent service when required. Normal charm reconciliation and status hooks do not perform apt
-  mutations.
+  agent service when required. Normal charm reconciliation and status hooks do not perform package
+  upgrades.
 - Temporarily disable the vulnerable Base64 intrinsic when the JVM accepts the mitigation flag.
 
 ## 2026-10-14

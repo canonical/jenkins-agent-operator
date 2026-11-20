@@ -308,6 +308,16 @@ class JenkinsAgentService:
                 return False
         return True
 
+    def installed_jdk_versions(self) -> dict[str, str]:
+        """Return installed versions for the JDK packages used by the agent."""
+        versions = {}
+        for package in JDK_PACKAGES:
+            try:
+                versions[package] = str(apt.DebianPackage.from_installed_package(package).version)
+            except apt.PackageNotFoundError:
+                continue
+        return versions
+
     def refresh_jdk_packages(self) -> None:
         """Refresh and upgrade the installed Jenkins agent JDK packages."""
         try:

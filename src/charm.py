@@ -20,6 +20,8 @@ logger = logging.getLogger()
 class JenkinsAgentCharm(ops.CharmBase):
     """Charm Jenkins agent."""
 
+    _stored = ops.StoredState()
+
     def __init__(self, *args: typing.Any):
         """Initialize the charm and register event handlers.
 
@@ -27,6 +29,7 @@ class JenkinsAgentCharm(ops.CharmBase):
             args: Arguments to initialize the charm base.
         """
         super().__init__(*args)
+        self._stored.set_default(restart_required=False)
         self.framework.observe(
             self.on.migrate_runtime_directory_action,
             self._on_migrate_runtime_directory_action,
@@ -148,24 +151,29 @@ class JenkinsAgentCharm(ops.CharmBase):
         try:
             state = State.from_charm(self)
             agent_service = service.JenkinsAgentService(state)
-            agent_service.refresh_jdk_packages()
             if not state.agent_relation_credentials:
                 message = (
-                    "Packages upgraded; agent not restarted because the agent relation has "
-                    "no complete credentials. Re-run after the relation is ready."
+                    "Agent relation has no complete credentials; packages were not upgraded. "
+                    "Re-run after the relation is ready."
                 )
                 event.set_results({"service-restarted": False, "message": message})
                 event.fail(message)
                 return
             if not agent_service.runtime_directories_usable():
                 message = (
-                    "Packages upgraded; agent not restarted because runtime directories are "
-                    "unsafe. Run migrate-runtime-directory and retry."
+                    "Agent runtime directories are unsafe; packages were not upgraded. "
+                    "Run migrate-runtime-directory and retry."
                 )
                 event.set_results({"service-restarted": False, "message": message})
                 event.fail(message)
                 return
+
+            versions_before = agent_service.installed_jdk_versions()
+            agent_service.refresh_jdk_packages()
+            versions_after = agent_service.installed_jdk_versions()
+            self._stored.restart_required = True
             agent_service.restart()
+            self._stored.restart_required = False
         except (
             InvalidStateError,
             RuntimeError,
@@ -177,6 +185,8 @@ class JenkinsAgentCharm(ops.CharmBase):
         event.set_results(
             {
                 "service-restarted": True,
+                "version-before": versions_before,
+                "version-after": versions_after,
                 "message": "Agent packages refreshed and service restarted.",
             }
         )

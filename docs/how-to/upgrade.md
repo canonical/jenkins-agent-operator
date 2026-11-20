@@ -14,6 +14,18 @@ juju status
 
 Once the charm is ready, the status will show the new revision number.
 
+## Refresh the agent packages
+
+Run the explicit package action during a maintenance window to upgrade the
+OpenJDK runtime and restart the agent service:
+
+```bash
+juju run --wait=30m jenkins-agent/0 refresh-packages
+```
+
+The action checks the relation and runtime prerequisites before changing
+packages. It reports the package versions before and after the refresh.
+
 ## Upgrade from a root-running revision
 
 Revision 265 ran the agent as `root` and may have left `remoting` and

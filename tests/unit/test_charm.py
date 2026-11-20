@@ -83,7 +83,14 @@ def test_refresh_packages_action_upgrades_and_restarts(
     """The explicit package action permits upgrade and reports success after restart."""
     harness = harness_with_agent_relation
     refresh_mock = MagicMock()
+    versions = MagicMock(
+        side_effect=[
+            {"openjdk-21-jre": "21.0.13+9-1"},
+            {"openjdk-21-jre": "21.0.13.1+2-1~24.04.1"},
+        ]
+    )
     monkeypatch.setattr(service.JenkinsAgentService, "refresh_jdk_packages", refresh_mock)
+    monkeypatch.setattr(service.JenkinsAgentService, "installed_jdk_versions", versions)
     harness.begin()
 
     output = harness.run_action("refresh-packages")
@@ -91,6 +98,8 @@ def test_refresh_packages_action_upgrades_and_restarts(
     refresh_mock.assert_called_once_with()
     service_mocks.restart.assert_called_once_with()
     assert output.results["message"] == "Agent packages refreshed and service restarted."
+    assert output.results["version-before"]["openjdk-21-jre"] == "21.0.13+9-1"
+    assert output.results["version-after"]["openjdk-21-jre"] == "21.0.13.1+2-1~24.04.1"
 
 
 def test_refresh_packages_action_fails_when_restart_is_pending(
@@ -106,7 +115,42 @@ def test_refresh_packages_action_fails_when_restart_is_pending(
     with pytest.raises(ops.testing.ActionFailed, match="no complete credentials"):
         harness.run_action("refresh-packages")
 
+    refresh_mock.assert_not_called()
     service_mocks.restart.assert_not_called()
+
+
+def test_refresh_packages_action_fails_on_unsafe_runtime_directories(
+    harness_with_agent_relation: ops.testing.Harness,
+    service_mocks: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Do not upgrade when the agent cannot safely restart."""
+    refresh_mock = MagicMock()
+    monkeypatch.setattr(service.JenkinsAgentService, "refresh_jdk_packages", refresh_mock)
+    monkeypatch.setattr(
+        service.JenkinsAgentService, "runtime_directories_usable", MagicMock(return_value=False)
+    )
+    harness_with_agent_relation.begin()
+
+    with pytest.raises(ops.testing.ActionFailed, match="migrate-runtime-directory"):
+        harness_with_agent_relation.run_action("refresh-packages")
+
+    refresh_mock.assert_not_called()
+    service_mocks.restart.assert_not_called()
+
+
+def test_refresh_packages_action_reports_restart_failure(
+    harness_with_agent_relation: ops.testing.Harness,
+    service_mocks: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Report a service restart failure after package refresh."""
+    monkeypatch.setattr(service.JenkinsAgentService, "refresh_jdk_packages", MagicMock())
+    service_mocks.restart.side_effect = service.ServiceRestartError("restart failed")
+    harness_with_agent_relation.begin()
+
+    with pytest.raises(ops.testing.ActionFailed, match="restart failed"):
+        harness_with_agent_relation.run_action("refresh-packages")
 
 
 def test_reconcile_install_error(harness: ops.testing.Harness, monkeypatch: pytest.MonkeyPatch):
