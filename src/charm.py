@@ -144,30 +144,54 @@ class JenkinsAgentCharm(ops.CharmBase):
         self._reconcile(event, automatic_runtime_migration=True)
 
     def _on_refresh_packages_action(self, event: ops.ActionEvent) -> None:
-        """Upgrade the JDK and restart the agent when prerequisites allow."""
+        """Upgrade agent packages and restart a running agent when required."""
         try:
             state = State.from_charm(self)
             agent_service = service.JenkinsAgentService(state)
+            versions_before = agent_service.installed_package_versions()
+            agent_service.refresh_packages()
+            versions_after = agent_service.installed_package_versions()
+
+            if not agent_service.is_running:
+                event.set_results(
+                    {
+                        "service-restarted": False,
+                        "version-before": versions_before,
+                        "version-after": versions_after,
+                        "message": "Agent packages refreshed; service was not running.",
+                    }
+                )
+                return
             if not state.agent_relation_credentials:
                 message = (
-                    "Agent relation has no complete credentials; packages were not upgraded. "
-                    "Re-run after the relation is ready."
+                    "Packages upgraded; the running agent was not restarted because the agent "
+                    "relation has no complete credentials. Re-run after the relation is ready."
                 )
-                event.set_results({"service-restarted": False, "message": message})
+                event.set_results(
+                    {
+                        "service-restarted": False,
+                        "version-before": versions_before,
+                        "version-after": versions_after,
+                        "message": message,
+                    }
+                )
                 event.fail(message)
                 return
             if not agent_service.runtime_directories_usable():
                 message = (
-                    "Agent runtime directories are unsafe; packages were not upgraded. "
-                    "Run migrate-runtime-directory and retry."
+                    "Packages upgraded; the running agent was not restarted because runtime "
+                    "directories are unsafe. Run migrate-runtime-directory and retry."
                 )
-                event.set_results({"service-restarted": False, "message": message})
+                event.set_results(
+                    {
+                        "service-restarted": False,
+                        "version-before": versions_before,
+                        "version-after": versions_after,
+                        "message": message,
+                    }
+                )
                 event.fail(message)
                 return
-
-            versions_before = agent_service.installed_package_versions()
-            agent_service.refresh_packages()
-            versions_after = agent_service.installed_package_versions()
             agent_service.restart()
         except (
             InvalidStateError,
