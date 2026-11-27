@@ -15,15 +15,15 @@ import pytest
 import charm_state
 
 
-def test_agent_meta_normalizes_comma_separated_labels_for_jenkins():
-    """Relation metadata preserves the documented comma-separated label format."""
+def test_agent_meta_preserves_space_separated_labels():
+    """Relation metadata preserves the documented space-separated label format."""
     metadata = charm_state.AgentMeta(
         executors=1,
-        labels="ownership-upgrade,migration-test",
+        labels="arm64 medium test-label",
         name="agent",
     )
 
-    assert metadata.as_dict()["labels"] == "ownership-upgrade,migration-test"
+    assert metadata.as_dict()["labels"] == "arm64 medium test-label"
 
 
 @pytest.mark.parametrize(

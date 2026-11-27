@@ -41,7 +41,7 @@ class AgentMeta(BaseModel):
 
     Attrs:
         executors: The number of executors available on the unit.
-        labels: The comma separated labels to assign to the agent.
+        labels: The space separated labels to assign to the agent.
         name: The name of the agent.
         remote_fs: The workspace root Jenkins should use on the agent.
     """
